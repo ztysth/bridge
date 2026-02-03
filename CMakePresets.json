@@ -1,0 +1,341 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true,
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": true,
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../bridge-build/vcpkg_installed"
+      }
+    },
+    {
+      "name": "debug-system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/debug-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true
+      }
+    },
+    {
+      "name": "release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BRIDGE_SANITIZER": "",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true,
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": true,
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../bridge-build/vcpkg_installed"
+      }
+    },
+    {
+      "name": "release-system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/release-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BRIDGE_SANITIZER": "",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true
+      }
+    },
+    {
+      "name": "asan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/asan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "address",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true,
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": true,
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../bridge-build/vcpkg_installed"
+      }
+    },
+    {
+      "name": "asan-system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/asan-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "address",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true
+      }
+    },
+    {
+      "name": "ubsan",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/ubsan",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "undefined",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true,
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": true,
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../bridge-build/vcpkg_installed"
+      }
+    },
+    {
+      "name": "ubsan-system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/ubsan-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "undefined",
+        "BRIDGE_CLANG_TIDY": false,
+        "BRIDGE_WARNINGS_AS_ERRORS": true
+      }
+    },
+    {
+      "name": "lint",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/lint",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "",
+        "BRIDGE_CLANG_TIDY": true,
+        "BRIDGE_WARNINGS_AS_ERRORS": true,
+        "CMAKE_TOOLCHAIN_FILE": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+        "VCPKG_MANIFEST_MODE": true,
+        "VCPKG_INSTALLED_DIR": "${sourceDir}/../bridge-build/vcpkg_installed"
+      }
+    },
+    {
+      "name": "lint-system",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/../bridge-build/lint-system",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BRIDGE_SANITIZER": "",
+        "BRIDGE_CLANG_TIDY": true,
+        "BRIDGE_WARNINGS_AS_ERRORS": true
+      }
+    },
+    {
+      "name": "tsan",
+      "inherits": "debug",
+      "binaryDir": "${sourceDir}/../bridge-build/tsan",
+      "cacheVariables": {
+        "BRIDGE_SANITIZER": "thread",
+        "BRIDGE_BUILD_GUI": false
+      }
+    },
+    {
+      "name": "tsan-system",
+      "inherits": "debug-system",
+      "binaryDir": "${sourceDir}/../bridge-build/tsan-system",
+      "cacheVariables": {
+        "BRIDGE_SANITIZER": "thread",
+        "BRIDGE_BUILD_GUI": false
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "jobs": 2
+    },
+    {
+      "name": "debug-system",
+      "configurePreset": "debug-system",
+      "jobs": 2
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "jobs": 2
+    },
+    {
+      "name": "release-system",
+      "configurePreset": "release-system",
+      "jobs": 2
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "jobs": 2
+    },
+    {
+      "name": "asan-system",
+      "configurePreset": "asan-system",
+      "jobs": 2
+    },
+    {
+      "name": "ubsan",
+      "configurePreset": "ubsan",
+      "jobs": 2
+    },
+    {
+      "name": "ubsan-system",
+      "configurePreset": "ubsan-system",
+      "jobs": 2
+    },
+    {
+      "name": "lint",
+      "configurePreset": "lint",
+      "jobs": 2
+    },
+    {
+      "name": "lint-system",
+      "configurePreset": "lint-system",
+      "jobs": 2
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "jobs": 2
+    },
+    {
+      "name": "tsan-system",
+      "configurePreset": "tsan-system",
+      "jobs": 2
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "debug-system",
+      "configurePreset": "debug-system",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "release-system",
+      "configurePreset": "release-system",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "asan",
+      "configurePreset": "asan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "asan-system",
+      "configurePreset": "asan-system",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ubsan",
+      "configurePreset": "ubsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "ubsan-system",
+      "configurePreset": "ubsan-system",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "lint",
+      "configurePreset": "lint",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "lint-system",
+      "configurePreset": "lint-system",
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      }
+    },
+    {
+      "name": "tsan",
+      "configurePreset": "tsan",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "worker"
+        }
+      }
+    },
+    {
+      "name": "tsan-system",
+      "configurePreset": "tsan-system",
+      "output": {
+        "outputOnFailure": true
+      },
+      "filter": {
+        "include": {
+          "name": "worker"
+        }
+      }
+    }
+  ]
+}
