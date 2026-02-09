@@ -1,0 +1,95 @@
+#include "bridge/core/file_protocol.hpp"
+#include <catch2/catch_test_macros.hpp>
+using namespace bridge;
+TEST_CASE("file offer and chunk codecs bound hostile lengths and geometry") {
+    FileManifest m{{1}, "sample.bin", chunk_size + 3, {2}};
+    m.size = (1ULL << 32U) + 3;
+    REQUIRE(decode_offer(encode_offer(m))->size == m.size);
+    m.size = chunk_size + 3;
+    auto offer = encode_offer(m);
+    REQUIRE(decode_offer(offer)->id == m.id);
+    m.kind = PayloadKind::folder;
+    REQUIRE(decode_offer(encode_offer(m))->kind == PayloadKind::folder);
+    auto hostile_kind = encode_offer(m);
+    hostile_kind[62] = 2;
+    REQUIRE_FALSE(decode_offer(hostile_kind));
+    offer[60] = 255;
+    REQUIRE_FALSE(decode_offer(offer));
+    Chunk c{m.id, chunk_size, {3}, {1, 2, 3}};
+    auto wire = encode_chunk(c);
+    REQUIRE(decode_chunk(wire, m)->data == c.data);
+    wire[27] = 4;
+    REQUIRE_FALSE(decode_chunk(wire, m));
+    wire = encode_chunk(c);
+    wire[0] = 9;
+    REQUIRE_FALSE(decode_chunk(wire, m));
+    c.offset = 1;
+    REQUIRE_FALSE(decode_chunk(encode_chunk(c), m));
+    c.offset = 0;
+    c.data.assign(chunk_size, 7);
+    auto frame = encode_frame(Message::data_chunk, encode_chunk(c));
+    REQUIRE(frame);
+    auto decoded = decode_frame(*frame);
+    REQUIRE(decoded);
+    REQUIRE(decoded->payload.size() == chunk_size + 60);
+    (*frame)[8] = 255;
+    REQUIRE_FALSE(decode_frame(*frame));
+    REQUIRE_FALSE(decode_offer(std::vector<std::uint8_t>(319)));
+    REQUIRE_FALSE(decode_hold(std::array<std::uint8_t, 9>{}));
+    auto h = encode_hold({1, true});
+    h[8] = 2;
+    REQUIRE_FALSE(decode_hold(h));
+    REQUIRE_FALSE(decode_barrier(std::vector<std::uint8_t>(23)));
+}
+TEST_CASE("pause drains matching revision barriers and each user owns their hold") {
+    PauseState sender(Role::initiator), receiver(Role::receiver);
+    REQUIRE_FALSE(sender.continue_transfer());
+    REQUIRE(receiver.receive(*sender.pause()));
+    auto b = sender.barrier(chunk_size);
+    REQUIRE(*receiver.current(b));
+    receiver.acknowledge();
+    sender.acknowledge();
+    REQUIRE(sender.paused());
+    REQUIRE(receiver.paused());
+    REQUIRE_FALSE(receiver.continue_transfer());
+    REQUIRE(receiver.receive(*sender.continue_transfer()));
+    REQUIRE_FALSE(sender.held());
+    REQUIRE_FALSE(receiver.held());
+    REQUIRE(receiver.receive(*sender.pause()));
+    REQUIRE(sender.receive(*receiver.pause()));
+    b = sender.barrier(chunk_size);
+    REQUIRE(*receiver.current(b));
+    receiver.acknowledge();
+    sender.acknowledge();
+    auto a = sender.continue_transfer();
+    auto c = receiver.continue_transfer();
+    REQUIRE(a);
+    REQUIRE(c);
+    REQUIRE(receiver.receive(*a));
+    REQUIRE(sender.receive(*c));
+    REQUIRE_FALSE(sender.held());
+    REQUIRE_FALSE(receiver.held());
+    REQUIRE_FALSE(*sender.current(b));
+    ++b.sender_revision;
+    ++b.sender_revision;
+    REQUIRE_FALSE(sender.current(b));
+    REQUIRE_FALSE(sender.receive({99, true}));
+}
+TEST_CASE("file session requires v1.2 and explicitly gated final close") {
+    SessionState c(Role::initiator, SessionPurpose::file), r(Role::receiver, SessionPurpose::file);
+    REQUIRE(c.confirm());
+    REQUIRE(r.receive({Message::confirm, {}}));
+    REQUIRE(r.confirm());
+    REQUIRE(c.receive({Message::confirm, {}}));
+    REQUIRE_FALSE(r.receive({Message::hello, {0, 0, 0, 0}}));
+    REQUIRE_FALSE(r.receive({Message::hello, {0, 1, 0, 1}}));
+    REQUIRE(r.receive({Message::hello, {0, 2, 0, 2}}));
+    REQUIRE(c.receive({Message::hello_ack, {0, 2}}));
+    REQUIRE(c.phase() == Phase::ready);
+    REQUIRE(r.phase() == Phase::ready);
+    REQUIRE_FALSE(r.receive({Message::close, {}}));
+    REQUIRE(r.expect_close());
+    REQUIRE(c.close_file());
+    REQUIRE(r.receive({Message::close, {}}));
+    REQUIRE(c.receive({Message::close_ack, {}}));
+}
