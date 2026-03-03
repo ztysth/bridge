@@ -1,0 +1,98 @@
+import importlib.util
+import json
+from pathlib import Path
+import struct
+import tempfile
+import unittest
+
+spec = importlib.util.spec_from_file_location("release", Path(__file__).parents[2] / ".github/package.py")
+release = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(release)
+
+
+class ReleaseTests(unittest.TestCase):
+    commit = "a" * 40
+
+    def make_assets(self, root):
+        for system, architectures in release.ARCHITECTURES.items():
+            for arch in architectures:
+                stem = f"bridge-0.1.0-{system}-{arch}"
+                metadata = {"version": "0.1.0", "platform": system, "architecture": arch,
+                            "source_commit": self.commit, "emulated": arch == "riscv64",
+                            "dependencies": ["Qt 6"]}
+                for suffix in (release.EXTENSIONS[system], ".json"):
+                    path = root / (stem + suffix)
+                    path.write_bytes(json.dumps(metadata).encode() if suffix == ".json" else b"fixture")
+                    path.with_name(path.name + ".sha256").write_text(
+                        f"{release.checksum(path)}  {path.name}\n")
+
+    def test_platform_architecture_headers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            binary = Path(tmp) / "app"
+            for arch, machine in (("x86_64", 62), ("arm64", 183), ("riscv64", 243)):
+                data = bytearray(64)
+                data[:6] = b"\x7fELF\x02\x01"
+                struct.pack_into("<H", data, 18, machine)
+                binary.write_bytes(data)
+                release.validate_binary(binary, "linux", arch)
+                with self.assertRaises(ValueError):
+                    release.validate_binary(binary, "linux", "arm64" if arch != "arm64" else "x86_64")
+            for system, machines in (("windows", (0x8664, 0xAA64)),
+                                     ("macos", (0x1000007, 0x100000C))):
+                for arch, machine in zip(("x86_64", "arm64"), machines):
+                    data = bytearray(70)
+                    if system == "windows":
+                        data[:2] = b"MZ"
+                        struct.pack_into("<I", data, 60, 64)
+                        data[64:68] = b"PE\0\0"
+                        struct.pack_into("<H", data, 68, machine)
+                    else:
+                        data[:4] = b"\xcf\xfa\xed\xfe"
+                        struct.pack_into("<I", data, 4, machine)
+                    binary.write_bytes(data)
+                    release.validate_binary(binary, system, arch)
+            for data in (b"", b"bad" * 64, b"MZ" + b"\0" * 62):
+                binary.write_bytes(data)
+                with self.assertRaises(ValueError):
+                    release.validate_binary(binary, "windows", "x86_64")
+            with self.assertRaises(ValueError):
+                release.validate_binary(binary, "macos", "riscv64")
+
+    def test_release_requires_every_asset_and_valid_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with self.assertRaises(ValueError):
+                release.verify_assets(root, "0.1.0", self.commit)
+            self.make_assets(root)
+            release.verify_assets(root, "0.1.0", self.commit)
+            self.assertEqual(len((root / "SHA256SUMS").read_text().splitlines()), 14)
+            victim = root / "bridge-0.1.0-linux-arm64.deb"
+            victim.write_bytes(b"corrupt")
+            with self.assertRaises(ValueError):
+                release.verify_assets(root, "0.1.0", self.commit)
+
+    def test_rejects_mixed_sources_metadata_and_extra_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self.make_assets(root)
+            for commit in ("b" * 40, "not-a-commit"):
+                with self.assertRaises(ValueError):
+                    release.verify_assets(root, "0.1.0", commit)
+            inventory = root / "bridge-0.1.0-linux-arm64.json"
+            for content in ("[]", "{}", "x" * (1024 * 1024 + 1)):
+                inventory.write_text(content)
+                with self.assertRaises(ValueError):
+                    release.verify_assets(root, "0.1.0", self.commit)
+            self.make_assets(root)
+            (root / "unintended-secret.txt").write_text("fixture")
+            with self.assertRaises(ValueError):
+                release.verify_assets(root, "0.1.0", self.commit)
+            (root / "unintended-secret.txt").unlink()
+            receipt = root / "bridge-0.1.0-linux-arm64.deb.sha256"
+            receipt.write_text("a" * 64 + "  ../escape\n")
+            with self.assertRaises(ValueError):
+                release.verify_assets(root, "0.1.0", self.commit)
+
+
+if __name__ == "__main__":
+    unittest.main()

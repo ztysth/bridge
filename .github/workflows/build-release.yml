@@ -1,0 +1,92 @@
+name: build-release-package
+on:
+  workflow_call:
+    inputs:
+      runner:
+        type: string
+        required: true
+      platform:
+        type: string
+        required: true
+      arch:
+        type: string
+        required: true
+      triplet:
+        type: string
+        default: ''
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 300
+    defaults:
+      run:
+        shell: bash
+    env:
+      VCPKG_DISABLE_METRICS: '1'
+      BRIDGE_CI_DIST: ${{ github.workspace }}/dist
+      BRIDGE_CI_ARCH: ${{ inputs.arch }}
+      BRIDGE_PLATFORM: ${{ inputs.platform }}
+      BRIDGE_TRIPLET: ${{ inputs.triplet }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Select disposable build directories
+        run: |
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg-bridge" >> "$GITHUB_ENV"
+          echo "VCPKG_BINARY_SOURCES=clear;files,$RUNNER_TEMP/vcpkg-binary-cache,readwrite" >> "$GITHUB_ENV"
+          echo "BRIDGE_CI_BUILD=$RUNNER_TEMP/bridge-release" >> "$GITHUB_ENV"
+      - name: Validate source version and tooling
+        run: |
+          python .github/package.py version
+          python -m unittest discover -s tests/tooling
+      - name: Build and package Ubuntu runtime dependencies
+        if: inputs.platform == 'linux'
+        run: bash .github/ci-linux.sh
+      - name: Configure native Windows compiler
+        if: inputs.platform == 'windows'
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
+        with:
+          arch: ${{ inputs.arch == 'arm64' && 'arm64' || 'amd64' }}
+      - name: Select macOS C++23 toolchain
+        if: inputs.platform == 'macos'
+        run: |
+          brew install ninja
+          echo "CC=$(xcrun --find clang)" >> "$GITHUB_ENV"
+          echo "CXX=$(xcrun --find clang++)" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        if: inputs.platform != 'linux'
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: sdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'cmake/release-triplets/*') }}
+      - name: Bootstrap pinned vcpkg
+        if: inputs.platform != 'linux'
+        run: |
+          git clone --filter=blob:none https://github.com/microsoft/vcpkg "$VCPKG_ROOT"
+          git -C "$VCPKG_ROOT" checkout 44819aa2a6c10e56065e2b0330e7d6c89d1d2574
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            "$VCPKG_ROOT/bootstrap-vcpkg.bat" -disableMetrics
+          else
+            "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+          fi
+      - name: Build and test native shared-runtime SDK
+        if: inputs.platform != 'linux'
+        run: |
+          cmake --preset release -B "$BRIDGE_CI_BUILD" \
+            -DVCPKG_TARGET_TRIPLET="$BRIDGE_TRIPLET" \
+            -DVCPKG_INSTALLED_DIR="$RUNNER_TEMP/vcpkg-installed" \
+            -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/cmake/release-triplets"
+          cmake --build "$BRIDGE_CI_BUILD" --parallel 2
+          ctest --test-dir "$BRIDGE_CI_BUILD" --output-on-failure
+          python .github/package.py package --build "$BRIDGE_CI_BUILD" --output "$BRIDGE_CI_DIST" \
+            --platform "$BRIDGE_PLATFORM" --arch "$BRIDGE_CI_ARCH" \
+            --sdk "$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bridge-${{ inputs.platform }}-${{ inputs.arch }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

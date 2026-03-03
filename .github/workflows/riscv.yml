@@ -1,0 +1,34 @@
+name: linux-riscv64-package
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  emulated:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          image: tonistiigi/binfmt@sha256:fe387fe5e30c623c66d8659573f68f94203d855ccb0c07f712acf04641a4995a
+          platforms: riscv64
+      - name: Build and test the riscv64 guest, then install its DEB
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/riscv" dist
+          docker run --rm --platform linux/riscv64 \
+            -v "$GITHUB_WORKSPACE:/workspace" -v "$RUNNER_TEMP/riscv:/out" -w /workspace \
+            -e BRIDGE_CI_BUILD=/out/build -e BRIDGE_CI_DIST=/workspace/dist \
+            -e BRIDGE_CI_ARCH=riscv64 -e BRIDGE_EMULATED=1 \
+            ubuntu@sha256:19793b6052e6440e819d5ac26157bbd970c8469f65d52df3b4bb3c4bf8eec749 \
+            bash -ceu 'apt-get update; apt-get install -y sudo ca-certificates git python3; git config --global --add safe.directory /workspace; bash .github/ci-linux.sh'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: bridge-linux-riscv64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7

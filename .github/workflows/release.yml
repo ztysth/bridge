@@ -1,0 +1,77 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  version:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Validate the tag
+        env:
+          BRIDGE_RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 .github/package.py version --tag "$BRIDGE_RELEASE_TAG"
+  native:
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {runner: ubuntu-24.04, platform: linux, arch: x86_64, triplet: ''}
+          - {runner: ubuntu-24.04-arm, platform: linux, arch: arm64, triplet: ''}
+          - {runner: windows-2022, platform: windows, arch: x86_64, triplet: x64-windows}
+          - {runner: windows-11-arm, platform: windows, arch: arm64, triplet: arm64-windows}
+          - {runner: macos-15-intel, platform: macos, arch: x86_64, triplet: x64-osx-dynamic}
+          - {runner: macos-15, platform: macos, arch: arm64, triplet: arm64-osx-dynamic}
+    uses: ./.github/workflows/build-release.yml
+    with:
+      runner: ${{ matrix.runner }}
+      platform: ${{ matrix.platform }}
+      arch: ${{ matrix.arch }}
+      triplet: ${{ matrix.triplet }}
+  riscv:
+    needs: version
+    uses: ./.github/workflows/riscv.yml
+  publish:
+    needs: [native, riscv]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: bridge-*
+          merge-multiple: true
+          path: dist
+      - name: Verify all packages and publish v0.1.0 preview
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRIDGE_RELEASE_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/package.py verify --directory dist
+          if gh release view "$BRIDGE_RELEASE_TAG" --json isDraft > "$RUNNER_TEMP/bridge-release.json" 2>/dev/null; then
+            if [[ "$(jq -r .isDraft "$RUNNER_TEMP/bridge-release.json")" != true ]]; then
+              echo 'The release is published; do not overwrite its assets.' >&2
+              exit 1
+            fi
+          else
+            gh release create "$BRIDGE_RELEASE_TAG" --verify-tag --draft --prerelease \
+              --title "bridge $BRIDGE_RELEASE_TAG" \
+              --notes 'File and folder transfers over a local network. Windows builds currently provide the UI; Linux RISC-V builds are experimental.'
+          fi
+          gh release upload "$BRIDGE_RELEASE_TAG" dist/* --clobber
+          gh release edit "$BRIDGE_RELEASE_TAG" --draft=false
