@@ -35,7 +35,6 @@ jobs:
           persist-credentials: false
       - name: Select disposable build directories
         run: |
-          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg-bridge" >> "$GITHUB_ENV"
           echo "VCPKG_BINARY_SOURCES=clear;files,$RUNNER_TEMP/vcpkg-binary-cache,readwrite" >> "$GITHUB_ENV"
           echo "BRIDGE_CI_BUILD=$RUNNER_TEMP/bridge-release" >> "$GITHUB_ENV"
       - name: Validate source version and tooling
@@ -54,9 +53,15 @@ jobs:
         if: inputs.platform == 'macos'
         run: |
           brew install ninja
-          echo "CC=$(xcrun --find clang)" >> "$GITHUB_ENV"
-          echo "CXX=$(xcrun --find clang++)" >> "$GITHUB_ENV"
+          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
+          echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
+          echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+      - name: Select pinned SDK location after compiler setup
+        if: inputs.platform != 'linux'
+        run: |
+          # Visual Studio exports its own VCPKG_ROOT; use our pinned checkout.
+          echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg-bridge" >> "$GITHUB_ENV"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: inputs.platform != 'linux'
         with:
