@@ -52,7 +52,7 @@ jobs:
       - name: Select macOS C++23 toolchain
         if: inputs.platform == 'macos'
         run: |
-          brew install ninja
+          brew install ninja autoconf autoconf-archive automake libtool
           echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
           echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
@@ -82,6 +82,7 @@ jobs:
         run: |
           cmake --preset release -B "$BRIDGE_CI_BUILD" \
             -DVCPKG_TARGET_TRIPLET="$BRIDGE_TRIPLET" \
+            -DVCPKG_HOST_TRIPLET="$BRIDGE_TRIPLET" \
             -DVCPKG_INSTALLED_DIR="$RUNNER_TEMP/vcpkg-installed" \
             -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/cmake/release-triplets"
           cmake --build "$BRIDGE_CI_BUILD" --parallel 2

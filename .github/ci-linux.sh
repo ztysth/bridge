@@ -9,7 +9,7 @@ sudo apt-get install -y g++-13 cmake ninja-build pkg-config libssl-dev catch2 \
   qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtquick-controls qml6-module-qtquick-layouts \
   qml6-module-qtquick-dialogs qml6-module-qtquick-templates \
   qml6-module-qtqml qml6-module-qtqml-models qml6-module-qtqml-workerscript qml6-module-qt-labs-folderlistmodel \
-  libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev dpkg-dev
+  libgl1-mesa-dev libxkbcommon-dev libxkbcommon-x11-dev dpkg-dev file
 cmake --preset release-system -B "$BRIDGE_CI_BUILD" \
   -DCMAKE_CXX_COMPILER=g++-13 -DBRIDGE_LINUX_SYSTEM_PACKAGE=ON
 cmake --build "$BRIDGE_CI_BUILD" --parallel 2
