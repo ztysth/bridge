@@ -1,7 +1,7 @@
 name: build-release-package
 on:
   workflow_call:
-    inputs:
+    inputs: &package_inputs
       runner:
         type: string
         required: true
@@ -14,6 +14,8 @@ on:
       triplet:
         type: string
         default: ''
+  workflow_dispatch:
+    inputs: *package_inputs
 permissions:
   contents: read
 jobs:
@@ -56,17 +58,21 @@ jobs:
           echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
           echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
-          echo "MACOSX_DEPLOYMENT_TARGET=15.0" >> "$GITHUB_ENV"
+          echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
       - name: Select pinned SDK location after compiler setup
         if: inputs.platform != 'linux'
         run: |
           # Visual Studio exports its own VCPKG_ROOT; use our pinned checkout.
           echo "VCPKG_ROOT=$RUNNER_TEMP/vcpkg-bridge" >> "$GITHUB_ENV"
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        id: sdk-cache
         if: inputs.platform != 'linux'
         with:
           path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: sdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', 'cmake/release-triplets/*') }}
+          key: sdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', format('cmake/release-triplets/{0}.cmake', inputs.triplet)) }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            sdk-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('vcpkg.json', format('cmake/release-triplets/{0}.cmake', inputs.triplet)) }}-
+            sdk-${{ runner.os }}-${{ runner.arch }}-
       - name: Bootstrap pinned vcpkg
         if: inputs.platform != 'linux'
         run: |
@@ -90,6 +96,12 @@ jobs:
           python .github/package.py package --build "$BRIDGE_CI_BUILD" --output "$BRIDGE_CI_DIST" \
             --platform "$BRIDGE_PLATFORM" --arch "$BRIDGE_CI_ARCH" \
             --sdk "$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
+      - name: Preserve completed SDK packages for retries
+        if: always() && inputs.platform != 'linux'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bridge-${{ inputs.platform }}-${{ inputs.arch }}

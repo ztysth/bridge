@@ -25,7 +25,7 @@ under development.
 
 Windows and macOS builds target x86-64 and ARM64. Linux builds target x86-64,
 ARM64 and experimental RISC-V 64. Linux packages require Ubuntu 24.04; macOS
-packages require macOS 15 or later.
+packages require macOS 14 or later.
 
 ## Build
 
