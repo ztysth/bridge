@@ -58,6 +58,25 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.validate_binary(binary, "macos", "riscv64")
 
+    def test_qml_runtime_requires_used_modules_without_window_compatibility_import(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            stage = Path(tmp)
+            modules = ("QtQuick", "QtQuick/Controls", "QtQuick/Layouts",
+                       "QtQuick/Dialogs", "QtQml", "QtQuick/Templates")
+            for module in modules:
+                qmldir = stage / "qml" / module / "qmldir"
+                qmldir.parent.mkdir(parents=True, exist_ok=True)
+                qmldir.write_text("module " + module.replace("/", ".") + "\n")
+            release.validate_qml_runtime(stage)
+            self.assertFalse((stage / "qml/QtQuick/Window").exists())
+            for module in modules:
+                qmldir = stage / "qml" / module / "qmldir"
+                content = qmldir.read_text()
+                qmldir.unlink()
+                with self.assertRaises(ValueError):
+                    release.validate_qml_runtime(stage)
+                qmldir.write_text(content)
+
     def test_release_requires_every_asset_and_valid_hashes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

@@ -72,6 +72,15 @@ def smoke(executable):
     run(executable, "--smoke-test", env=environment)
 
 
+def validate_qml_runtime(stage):
+    # Main.qml imports and their shared QML/Controls runtime dependencies.
+    # QtQuick.Window is a compatibility import, not a required separate module.
+    for module in ("QtQuick", "QtQuick/Controls", "QtQuick/Layouts",
+                   "QtQuick/Dialogs", "QtQml", "QtQuick/Templates"):
+        if not list(stage.rglob(module + "/qmldir")):
+            raise ValueError(f"QML runtime deployment is incomplete: {module}")
+
+
 def package(build, output, system, architecture, sdk=None, emulated=False):
     release_version = version()
     output.mkdir(parents=True, exist_ok=True)
@@ -108,10 +117,7 @@ def package(build, output, system, architecture, sdk=None, emulated=False):
             notice_root.mkdir(parents=True, exist_ok=True)
             for name in ("README.md", "LICENSE", "THIRD_PARTY_NOTICES.md"):
                 shutil.copy2(ROOT / name, notice_root / name)
-        for module in ("QtQuick", "QtQuick/Window", "QtQuick/Controls", "QtQuick/Layouts",
-                       "QtQuick/Dialogs", "QtQml"):
-            if not list(stage.rglob(module + "/qmldir")):
-                raise ValueError(f"QML runtime deployment is incomplete: {module}")
+        validate_qml_runtime(stage)
         validate_binary(executable, system, architecture)
         if sdk is None:
             raise ValueError("An installed vcpkg SDK is required")
