@@ -1,5 +1,6 @@
 #include "bridge/security/identity.hpp"
 #include <QCryptographicHash>
+#include <QSslSocket>
 #include <array>
 #include <cstring>
 #include <memory>
@@ -21,6 +22,11 @@ Result<QByteArray> pem_bytes(BIO* bio) {
 }
 } // namespace
 Result<Identity> make_identity() {
+    // Qt's key/certificate adapters must share the transport's OpenSSL backend.
+    // Windows otherwise selects Schannel before a transport is constructed.
+    const auto backend = QStringLiteral("openssl");
+    if (QSslSocket::activeBackend() != backend && !QSslSocket::setActiveBackend(backend))
+        return invalid;
     Owned<EVP_PKEY, EVP_PKEY_free> key(EVP_EC_gen("prime256v1"), EVP_PKEY_free);
     Owned<X509, X509_free> cert(X509_new(), X509_free);
     if (!key || !cert || X509_set_version(cert.get(), 2) != 1 ||
