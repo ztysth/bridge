@@ -92,7 +92,11 @@ jobs:
             -DVCPKG_INSTALLED_DIR="$RUNNER_TEMP/vcpkg-installed" \
             -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/cmake/release-triplets"
           cmake --build "$BRIDGE_CI_BUILD" --parallel 2
-          ctest --test-dir "$BRIDGE_CI_BUILD" --output-on-failure
+          bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
+          QT_PLUGIN_PATH="$bridge_sdk/Qt6/plugins" \
+            QML_IMPORT_PATH="$bridge_sdk/Qt6/qml" \
+            PATH="$bridge_sdk/bin:$PATH" \
+            ctest --test-dir "$BRIDGE_CI_BUILD" --output-on-failure
           python .github/package.py package --build "$BRIDGE_CI_BUILD" --output "$BRIDGE_CI_DIST" \
             --platform "$BRIDGE_PLATFORM" --arch "$BRIDGE_CI_ARCH" \
             --sdk "$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
