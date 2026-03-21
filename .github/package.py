@@ -15,8 +15,8 @@ ARCHITECTURES = {"linux": {"x86_64", "arm64", "riscv64"},
 EXTENSIONS = {"linux": ".deb", "windows": ".zip", "macos": ".dmg"}
 
 
-def run(*args, env=None):
-    subprocess.run(list(map(str, args)), check=True, env=env)
+def run(*args, env=None, timeout=None):
+    subprocess.run(list(map(str, args)), check=True, env=env, timeout=timeout)
 
 
 def version(root=ROOT):
@@ -69,7 +69,7 @@ def smoke(executable):
                 "DYLD_LIBRARY_PATH"):
         environment.pop(key, None)
     environment.update(QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software")
-    run(executable, "--smoke-test", env=environment)
+    run(executable, "--smoke-test", env=environment, timeout=15)
 
 
 def validate_qml_runtime(stage):
