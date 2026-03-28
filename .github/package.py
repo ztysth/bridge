@@ -91,8 +91,10 @@ def package(build, output, system, architecture, sdk=None, emulated=False):
     if system == "linux":
         executable = build / "bridge_gui"
         validate_binary(executable, system, architecture)
-        run("cpack", "--config", build / "CPackConfig.cmake", "-B", output)
-        candidates = list(output.glob("bridge_*.deb"))
+        # CPack creates a recursive _CPack_Packages tree beside the installer.
+        # Keep that build output out of the directory uploaded as release assets.
+        run("cpack", "--config", build / "CPackConfig.cmake", "-B", stage)
+        candidates = list(stage.glob("bridge_*.deb"))
         if len(candidates) != 1:
             raise ValueError("Expected exactly one DEB")
         asset = output / (stem + ".deb")
@@ -153,7 +155,10 @@ def package(build, output, system, architecture, sdk=None, emulated=False):
 def verify_assets(directory, release_version, source_commit):
     expected = {f"bridge-{release_version}-{system}-{arch}{EXTENSIONS[system]}"
                 for system, architectures in ARCHITECTURES.items() for arch in architectures}
-    names = {p.name for p in directory.iterdir() if p.is_file()}
+    entries = list(directory.iterdir())
+    if any(not p.is_file() or p.is_symlink() for p in entries):
+        raise ValueError("Unexpected release directory or symlink")
+    names = {p.name for p in entries}
     if not expected <= names:
         raise ValueError("The release is missing required platform packages")
     allowed = {"SHA256SUMS"}

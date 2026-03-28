@@ -4,6 +4,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location("release", Path(__file__).parents[2] / ".github/package.py")
 release = importlib.util.module_from_spec(spec)
@@ -90,6 +91,37 @@ class ReleaseTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 release.verify_assets(root, "0.1.0", self.commit)
 
+    def test_linux_packaging_keeps_cpack_scratch_outside_release_assets(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build = root / "build"
+            output = root / "dist"
+            build.mkdir()
+            header = bytearray(64)
+            header[:6] = b"\x7fELF\x02\x01"
+            struct.pack_into("<H", header, 18, 62)
+            (build / "bridge_gui").write_bytes(header)
+
+            def command(*args):
+                if args[0] == "cpack":
+                    directory = Path(args[-1])
+                    (directory / "_CPack_Packages").mkdir(parents=True)
+                    (directory / "bridge_0.1.0_amd64.deb").write_bytes(b"package")
+                else:
+                    self.assertEqual(args[:4], ("sudo", "apt-get", "install", "-y"))
+                    self.assertEqual(args[4], output / "bridge-0.1.0-linux-x86_64.deb")
+
+            with patch.object(release, "run", side_effect=command), \
+                    patch.object(release, "smoke") as smoke, \
+                    patch.object(release.subprocess, "check_output",
+                                 side_effect=["Qt 6.4.2\n", self.commit + "\n"]):
+                release.package(build, output, "linux", "x86_64")
+            smoke.assert_called_once_with("/usr/bin/bridge_gui")
+            self.assertTrue((build / "release-stage/_CPack_Packages").is_dir())
+            self.assertEqual({p.name for p in output.iterdir()}, {
+                "bridge-0.1.0-linux-x86_64.deb", "bridge-0.1.0-linux-x86_64.deb.sha256",
+                "bridge-0.1.0-linux-x86_64.json", "bridge-0.1.0-linux-x86_64.json.sha256"})
+
     def test_rejects_mixed_sources_metadata_and_extra_files(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -103,6 +135,11 @@ class ReleaseTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     release.verify_assets(root, "0.1.0", self.commit)
             self.make_assets(root)
+            scratch = root / "_CPack_Packages"
+            scratch.mkdir()
+            with self.assertRaises(ValueError):
+                release.verify_assets(root, "0.1.0", self.commit)
+            scratch.rmdir()
             (root / "unintended-secret.txt").write_text("fixture")
             with self.assertRaises(ValueError):
                 release.verify_assets(root, "0.1.0", self.commit)
