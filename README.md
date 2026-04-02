@@ -31,7 +31,7 @@ packages require macOS 14 or later.
 
 Requires a C++23 compiler, CMake 3.25+, Ninja and vcpkg. Set `VCPKG_ROOT` to your
 vcpkg checkout; dependency versions are pinned in `vcpkg.json`. With GCC 13's
-standard library, use GCC 13+ or Clang 19+.
+standard library, use GCC 13+ or Clang 19+. macOS builds require Xcode 26+.
 
 ```sh
 cmake --preset debug

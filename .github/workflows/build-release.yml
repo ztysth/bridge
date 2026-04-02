@@ -54,11 +54,18 @@ jobs:
       - name: Select macOS C++23 toolchain
         if: inputs.platform == 'macos'
         run: |
+          export DEVELOPER_DIR=/Applications/Xcode_26.0.1.app/Contents/Developer
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           brew install ninja autoconf autoconf-archive automake libtool
-          echo "CC=/usr/bin/clang" >> "$GITHUB_ENV"
-          echo "CXX=/usr/bin/clang++" >> "$GITHUB_ENV"
+          echo "CC=$(xcrun --find clang)" >> "$GITHUB_ENV"
+          echo "CXX=$(xcrun --find clang++)" >> "$GITHUB_ENV"
           echo "SDKROOT=$(xcrun --sdk macosx --show-sdk-path)" >> "$GITHUB_ENV"
           echo "MACOSX_DEPLOYMENT_TARGET=14.0" >> "$GITHUB_ENV"
+          "$(xcrun --find clang++)" -std=c++23 -mmacosx-version-min=14.0 \
+            -isysroot "$(xcrun --sdk macosx --show-sdk-path)" \
+            cmake/checks/standard_library.cpp -o "$RUNNER_TEMP/bridge-toolchain-check"
+          "$RUNNER_TEMP/bridge-toolchain-check"
       - name: Select pinned SDK location after compiler setup
         if: inputs.platform != 'linux'
         run: |
