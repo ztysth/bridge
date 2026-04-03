@@ -109,7 +109,7 @@ class ReleaseTests(unittest.TestCase):
                     (directory / "bridge_0.1.0_amd64.deb").write_bytes(b"package")
                 else:
                     self.assertEqual(args[:4], ("sudo", "apt-get", "install", "-y"))
-                    self.assertEqual(args[4], output / "bridge-0.1.0-linux-x86_64.deb")
+                    self.assertEqual(args[4], (output / "bridge-0.1.0-linux-x86_64.deb").resolve())
 
             with patch.object(release, "run", side_effect=command), \
                     patch.object(release, "smoke") as smoke, \
