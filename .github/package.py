@@ -1,5 +1,6 @@
 """Validate and package native builds; no network access or credential handling."""
 import argparse
+import ctypes
 import hashlib
 import json
 import os
@@ -16,7 +17,24 @@ EXTENSIONS = {"linux": ".deb", "windows": ".zip", "macos": ".dmg"}
 
 
 def run(*args, env=None, timeout=None):
-    subprocess.run(list(map(str, args)), check=True, env=env, timeout=timeout)
+    set_error_mode = None
+    previous_mode = 0
+    if os.name == "nt":
+        # Loader dialogs otherwise hide missing DLL failures on unattended runners.
+        # This helper is single-threaded; descendants inherit its process error mode.
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.GetErrorMode.argtypes = []
+        kernel.GetErrorMode.restype = ctypes.c_uint
+        set_error_mode = kernel.SetErrorMode
+        set_error_mode.argtypes = [ctypes.c_uint]
+        set_error_mode.restype = ctypes.c_uint
+        previous_mode = kernel.GetErrorMode()
+        set_error_mode(previous_mode | 0x0001 | 0x0002 | 0x8000)
+    try:
+        subprocess.run(list(map(str, args)), check=True, env=env, timeout=timeout)
+    finally:
+        if set_error_mode is not None:
+            set_error_mode(previous_mode)
 
 
 def version(root=ROOT):
@@ -203,6 +221,8 @@ def main():
     sub = parser.add_subparsers(dest="action", required=True)
     check = sub.add_parser("version")
     check.add_argument("--tag")
+    test = sub.add_parser("test")
+    test.add_argument("--build", type=Path, required=True)
     pack = sub.add_parser("package")
     pack.add_argument("--build", type=Path, required=True)
     pack.add_argument("--output", type=Path, required=True)
@@ -218,6 +238,8 @@ def main():
         if args.tag is not None and args.tag != "v" + value:
             raise ValueError("Release tag must match the source version")
         print(value)
+    elif args.action == "test":
+        run("ctest", "--test-dir", args.build, "--output-on-failure")
     elif args.action == "package":
         package(args.build.resolve(), args.output.resolve(), args.platform, args.arch, args.sdk,
                 args.emulated)

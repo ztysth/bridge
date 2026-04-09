@@ -4,7 +4,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 spec = importlib.util.spec_from_file_location("release", Path(__file__).parents[2] / ".github/package.py")
 release = importlib.util.module_from_spec(spec)
@@ -13,6 +13,20 @@ spec.loader.exec_module(release)
 
 class ReleaseTests(unittest.TestCase):
     commit = "a" * 40
+
+    def test_windows_child_error_mode_is_restored_after_success_or_failure(self):
+        for error in (None, release.subprocess.CalledProcessError(5, ["fixture"])):
+            kernel = Mock()
+            kernel.GetErrorMode.return_value = 0x0020
+            with patch.object(release.os, "name", "nt"), \
+                    patch.object(release.ctypes, "WinDLL", return_value=kernel, create=True), \
+                    patch.object(release.subprocess, "run", side_effect=error):
+                if error is None:
+                    release.run("fixture", timeout=15)
+                else:
+                    with self.assertRaises(release.subprocess.CalledProcessError):
+                        release.run("fixture", timeout=15)
+            self.assertEqual(kernel.SetErrorMode.call_args_list, [call(0x8023), call(0x0020)])
 
     def make_assets(self, root):
         for system, architectures in release.ARCHITECTURES.items():

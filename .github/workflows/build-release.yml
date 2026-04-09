@@ -101,13 +101,16 @@ jobs:
           cmake --build "$BRIDGE_CI_BUILD" --parallel 2
           bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
           bridge_sdk_bin="$bridge_sdk/bin"
+          bridge_test_logging=()
           if [[ "$RUNNER_OS" == Windows ]]; then
             bridge_sdk_bin="$(cygpath -u "$bridge_sdk_bin")"
+            bridge_test_logging+=(QT_FORCE_STDERR_LOGGING=1 QT_DEBUG_PLUGINS=1)
+            MSYS2_ARG_CONV_EXCL=/DEPENDENTS dumpbin /DEPENDENTS "$BRIDGE_CI_BUILD/bridge_gui.exe"
           fi
-          QT_PLUGIN_PATH="$bridge_sdk/Qt6/plugins" \
+          env "${bridge_test_logging[@]}" QT_PLUGIN_PATH="$bridge_sdk/Qt6/plugins" \
             QML_IMPORT_PATH="$bridge_sdk/Qt6/qml" \
             PATH="$bridge_sdk_bin:$PATH" \
-            ctest --test-dir "$BRIDGE_CI_BUILD" --output-on-failure
+            python .github/package.py test --build "$BRIDGE_CI_BUILD"
           python .github/package.py package --build "$BRIDGE_CI_BUILD" --output "$BRIDGE_CI_DIST" \
             --platform "$BRIDGE_PLATFORM" --arch "$BRIDGE_CI_ARCH" \
             --sdk "$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
