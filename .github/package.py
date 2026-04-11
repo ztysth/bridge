@@ -9,6 +9,7 @@ import re
 import shutil
 import struct
 import subprocess
+import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHITECTURES = {"linux": {"x86_64", "arm64", "riscv64"},
@@ -86,7 +87,8 @@ def smoke(executable):
     for key in ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH", "LD_LIBRARY_PATH",
                 "DYLD_LIBRARY_PATH"):
         environment.pop(key, None)
-    environment.update(QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software")
+    platform = {"win32": "windows", "darwin": "cocoa"}.get(sys.platform, "offscreen")
+    environment.update(QT_QPA_PLATFORM=platform, QT_QUICK_BACKEND="software")
     run(executable, "--smoke-test", env=environment, timeout=15)
 
 

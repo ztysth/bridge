@@ -28,6 +28,21 @@ class ReleaseTests(unittest.TestCase):
                         release.run("fixture", timeout=15)
             self.assertEqual(kernel.SetErrorMode.call_args_list, [call(0x8023), call(0x0020)])
 
+    def test_package_smoke_uses_host_backend_without_sdk_environment(self):
+        sdk_variables = ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH",
+                         "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH")
+        for host, backend in (("win32", "windows"), ("darwin", "cocoa"), ("linux", "offscreen")):
+            with patch.object(release.sys, "platform", host), \
+                    patch.dict(release.os.environ, {key: "fixture-sdk" for key in sdk_variables}), \
+                    patch.object(release, "run") as command:
+                release.smoke("fixture")
+            self.assertEqual(command.call_args.args, ("fixture", "--smoke-test"))
+            options = command.call_args.kwargs
+            self.assertEqual(options["timeout"], 15)
+            self.assertEqual(options["env"]["QT_QPA_PLATFORM"], backend)
+            self.assertEqual(options["env"]["QT_QUICK_BACKEND"], "software")
+            self.assertTrue(all(key not in options["env"] for key in sdk_variables))
+
     def make_assets(self, root):
         for system, architectures in release.ARCHITECTURES.items():
             for arch in architectures:
