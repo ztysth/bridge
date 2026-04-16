@@ -82,14 +82,34 @@ def checksum(path):
         return hashlib.file_digest(data, "sha256").hexdigest()
 
 
-def smoke(executable):
+def runtime_environment():
     environment = dict(os.environ)
     for key in ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH", "LD_LIBRARY_PATH",
                 "DYLD_LIBRARY_PATH"):
         environment.pop(key, None)
     platform = {"win32": "windows", "darwin": "cocoa"}.get(sys.platform, "offscreen")
     environment.update(QT_QPA_PLATFORM=platform, QT_QUICK_BACKEND="software")
-    run(executable, "--smoke-test", env=environment, timeout=15)
+    if sys.platform == "win32":
+        # Do not accidentally resolve an omitted DLL from the SDK or host OpenSSL.
+        windows = Path(environment["SystemRoot"])
+        environment["PATH"] = os.pathsep.join(map(str, (windows / "System32", windows)))
+    return environment
+
+
+def smoke(executable):
+    run(executable, "--smoke-test", env=runtime_environment(), timeout=15)
+
+
+def probe_windows_transport(build, executable_directory):
+    # Exercise production TLS with deployed DLLs, then remove the test executable.
+    probe = executable_directory / "bridge_integration_tests.exe"
+    if probe.exists():
+        raise ValueError("Unexpected transport probe in the package")
+    shutil.copy2(build / probe.name, probe)
+    try:
+        run(probe, env=runtime_environment(), timeout=60)
+    finally:
+        probe.unlink()
 
 
 def validate_qml_runtime(stage):
@@ -129,8 +149,12 @@ def package(build, output, system, architecture, sdk=None, emulated=False):
         run("cmake", "--install", build, "--prefix", stage)
         if system == "windows":
             executable = stage / "bin" / "bridge_gui.exe"
-            if not list(stage.rglob("Qt6Core.dll")) or not list(stage.rglob("qopensslbackend.dll")):
+            if (not list(stage.rglob("Qt6Core.dll")) or
+                    not list(stage.rglob("qopensslbackend.dll")) or
+                    not list(executable.parent.glob("libssl*.dll")) or
+                    not list(executable.parent.glob("libcrypto*.dll"))):
                 raise ValueError("Qt/TLS runtime deployment is incomplete")
+            probe_windows_transport(build, executable.parent)
             (stage / "bridge.cmd").write_text('@echo off\n"%~dp0bin\\bridge_gui.exe" %*\n')
             notice_root = stage / "share" / "bridge"
         else:

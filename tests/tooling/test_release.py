@@ -33,7 +33,9 @@ class ReleaseTests(unittest.TestCase):
                          "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH")
         for host, backend in (("win32", "windows"), ("darwin", "cocoa"), ("linux", "offscreen")):
             with patch.object(release.sys, "platform", host), \
-                    patch.dict(release.os.environ, {key: "fixture-sdk" for key in sdk_variables}), \
+                    patch.dict(release.os.environ, {**{key: "fixture-sdk" for key in sdk_variables},
+                                                   "SystemRoot": "C:/Windows",
+                                                   "PATH": "fixture-sdk"}), \
                     patch.object(release, "run") as command:
                 release.smoke("fixture")
             self.assertEqual(command.call_args.args, ("fixture", "--smoke-test"))
@@ -42,6 +44,36 @@ class ReleaseTests(unittest.TestCase):
             self.assertEqual(options["env"]["QT_QPA_PLATFORM"], backend)
             self.assertEqual(options["env"]["QT_QUICK_BACKEND"], "software")
             self.assertTrue(all(key not in options["env"] for key in sdk_variables))
+            if host == "win32":
+                self.assertNotIn("fixture-sdk", options["env"]["PATH"])
+
+    def test_windows_transport_probe_is_removed_after_success_or_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            build, stage = root / "build", root / "stage"
+            build.mkdir()
+            stage.mkdir()
+            binary = "bridge_integration_tests.exe"
+            (build / binary).write_bytes(b"fixture")
+            for error in (None, release.subprocess.CalledProcessError(5, ["fixture"])):
+                def command(*args, **kwargs):
+                    self.assertEqual(args, (stage / binary,))
+                    self.assertEqual((stage / binary).read_bytes(), b"fixture")
+                    self.assertEqual(kwargs["timeout"], 60)
+                    if error is not None:
+                        raise error
+                with patch.object(release, "run", side_effect=command):
+                    if error is None:
+                        release.probe_windows_transport(build, stage)
+                    else:
+                        with self.assertRaises(release.subprocess.CalledProcessError):
+                            release.probe_windows_transport(build, stage)
+                self.assertFalse((stage / binary).exists())
+                self.assertTrue((build / binary).exists())
+            (stage / binary).write_bytes(b"existing")
+            with self.assertRaises(ValueError):
+                release.probe_windows_transport(build, stage)
+            self.assertEqual((stage / binary).read_bytes(), b"existing")
 
     def make_assets(self, root):
         for system, architectures in release.ARCHITECTURES.items():

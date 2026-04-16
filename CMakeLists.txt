@@ -71,8 +71,21 @@ if(BRIDGE_BUILD_SESSION)
       qt_generate_deploy_qml_app_script(TARGET bridge_gui FILENAME_VARIABLE deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR)
     else()
+      set(bridge_deploy_options)
+      if(WIN32)
+        if(Qt6_VERSION VERSION_LESS 6.7)
+          message(FATAL_ERROR "Windows packaging requires Qt 6.7+ deployment options")
+        endif()
+        # windeployqt otherwise skips the backend used for bilateral TLS pairing.
+        get_filename_component(bridge_openssl_root "${OPENSSL_INCLUDE_DIR}" DIRECTORY)
+        list(APPEND bridge_deploy_options DEPLOY_TOOL_OPTIONS
+          --openssl-root "${bridge_openssl_root}" --skip-plugin-types qmltooling)
+        if(Qt6_VERSION VERSION_GREATER_EQUAL 6.9)
+          qt_policy(SET QTP0007 NEW)
+        endif()
+      endif()
       qt_generate_deploy_qml_app_script(TARGET bridge_gui OUTPUT_SCRIPT deploy_script
-        NO_UNSUPPORTED_PLATFORM_ERROR)
+        NO_UNSUPPORTED_PLATFORM_ERROR ${bridge_deploy_options})
     endif()
     if(NOT BRIDGE_LINUX_SYSTEM_PACKAGE)
       install(SCRIPT ${deploy_script})
