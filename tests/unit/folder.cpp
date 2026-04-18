@@ -123,6 +123,12 @@ TEST_CASE("folder source rejects symlinks special entries and case collisions") 
         if (mode == 2) {
             write(f.root / "source" / "A", "");
             write(f.root / "source" / "a", "");
+            // A case-insensitive source stores one file for these two spellings.
+            // Hostile received bundles still exercise collisions on every host.
+            if (std::filesystem::equivalent(f.root / "source" / "A", f.root / "source" / "a")) {
+                REQUIRE(io::SourcePayload::open(f.root / "source", {1}));
+                continue;
+            }
         }
         if (mode == 3)
             write(f.root / "source" / "CON.txt", "");
