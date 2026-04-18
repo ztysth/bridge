@@ -4,9 +4,17 @@ function(bridge_options target)
       message(FATAL_ERROR "These sanitizer presets require GCC/Clang. Native MSVC sanitizer validation is not yet configured.")
     endif()
     target_compile_options(${target} PRIVATE /W4 /permissive-)
-    target_compile_options(${target} PRIVATE
-      "$<$<CONFIG:Release>:/pathmap:${PROJECT_SOURCE_DIR}=.>"
-      "$<$<CONFIG:Release>:/pathmap:${PROJECT_BINARY_DIR}=./build>")
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+      # MSVC ignores /pathmap without deterministic compilation enabled.
+      target_compile_options(${target} PRIVATE
+        "$<$<CONFIG:Release>:/experimental:deterministic>"
+        "$<$<CONFIG:Release>:/pathmap:${PROJECT_SOURCE_DIR}=.>"
+        "$<$<CONFIG:Release>:/pathmap:${PROJECT_BINARY_DIR}=./build>")
+    else()
+      target_compile_options(${target} PRIVATE
+        "$<$<CONFIG:Release>:/clang:-ffile-prefix-map=${PROJECT_SOURCE_DIR}=.>"
+        "$<$<CONFIG:Release>:/clang:-ffile-prefix-map=${PROJECT_BINARY_DIR}=./build>")
+    endif()
     if(BRIDGE_WARNINGS_AS_ERRORS)
       target_compile_options(${target} PRIVATE /WX)
     endif()

@@ -75,6 +75,23 @@ class ReleaseTests(unittest.TestCase):
                 release.probe_windows_transport(build, stage)
             self.assertEqual((stage / binary).read_bytes(), b"existing")
 
+    def test_windows_failure_diagnostic_retains_bounded_native_debugger_call(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "bridge_integration_tests.exe").write_bytes(b"fixture")
+            debugger = root / "Windows Kits/10/Debuggers/arm64/cdb.exe"
+            debugger.parent.mkdir(parents=True)
+            debugger.write_bytes(b"fixture")
+            error = release.subprocess.CalledProcessError(0xC0000005, ["fixture"])
+            with patch.dict(release.os.environ, {"ProgramFiles(x86)": str(root),
+                                               "BRIDGE_CI_ARCH": "arm64"}), \
+                    patch.object(release, "run", side_effect=[error, None]) as command:
+                release.diagnose_windows(root)
+            self.assertEqual(command.call_args_list[0].kwargs["timeout"], 30)
+            self.assertEqual(command.call_args.args[0], debugger)
+            self.assertIn(".ecxr; kp", command.call_args.args[2])
+            self.assertEqual(command.call_args.kwargs["timeout"], 90)
+
     def make_assets(self, root):
         for system, architectures in release.ARCHITECTURES.items():
             for arch in architectures:

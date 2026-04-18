@@ -112,6 +112,26 @@ def probe_windows_transport(build, executable_directory):
         probe.unlink()
 
 
+def diagnose_windows(build):
+    probe = build / "bridge_integration_tests.exe"
+    if not probe.is_file():
+        print("No integration executable was built; inspect the compiler failure.")
+        return
+    # A separate diagnostic rerun cannot turn the failed CTest step green.
+    try:
+        run(probe, "--success", timeout=30)
+    except subprocess.CalledProcessError as error:
+        print(f"Integration diagnostic exit code: {error.returncode}", flush=True)
+    architecture = "arm64" if os.environ.get("BRIDGE_CI_ARCH") == "arm64" else "x64"
+    debugger = (Path(os.environ["ProgramFiles(x86)"]) / "Windows Kits" / "10" /
+                "Debuggers" / architecture / "cdb.exe")
+    if not debugger.is_file():
+        print(f"The runner has no {architecture} Windows SDK command-line debugger.")
+        return
+    run(debugger, "-c", "sxe av; g; .ecxr; kp; q", probe,
+        "explicit local receive and bilateral TLS pairing complete cleanly", timeout=90)
+
+
 def validate_qml_runtime(stage):
     # Main.qml imports and their shared QML/Controls runtime dependencies.
     # QtQuick.Window is a compatibility import, not a required separate module.
@@ -249,6 +269,8 @@ def main():
     check.add_argument("--tag")
     test = sub.add_parser("test")
     test.add_argument("--build", type=Path, required=True)
+    diagnostic = sub.add_parser("diagnose-windows")
+    diagnostic.add_argument("--build", type=Path, required=True)
     pack = sub.add_parser("package")
     pack.add_argument("--build", type=Path, required=True)
     pack.add_argument("--output", type=Path, required=True)
@@ -266,6 +288,8 @@ def main():
         print(value)
     elif args.action == "test":
         run("ctest", "--test-dir", args.build, "--output-on-failure")
+    elif args.action == "diagnose-windows":
+        diagnose_windows(args.build)
     elif args.action == "package":
         package(args.build.resolve(), args.output.resolve(), args.platform, args.arch, args.sdk,
                 args.emulated)
