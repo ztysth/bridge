@@ -91,7 +91,12 @@ def runtime_environment():
     environment.update(QT_QPA_PLATFORM=platform, QT_QUICK_BACKEND="software")
     if sys.platform == "win32":
         # Do not accidentally resolve an omitted DLL from the SDK or host OpenSSL.
-        windows = Path(environment["SystemRoot"])
+        # dict(os.environ) loses Windows' case-insensitive lookup semantics.
+        windows_root = next((value for key, value in environment.items()
+                             if key.upper() == "SYSTEMROOT"), None)
+        if windows_root is None:
+            raise ValueError("Windows system root is missing from the environment")
+        windows = Path(windows_root)
         environment["PATH"] = os.pathsep.join(map(str, (windows / "System32", windows)))
     return environment
 

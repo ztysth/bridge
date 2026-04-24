@@ -34,7 +34,7 @@ class ReleaseTests(unittest.TestCase):
         for host, backend in (("win32", "windows"), ("darwin", "cocoa"), ("linux", "offscreen")):
             with patch.object(release.sys, "platform", host), \
                     patch.dict(release.os.environ, {**{key: "fixture-sdk" for key in sdk_variables},
-                                                   "SystemRoot": "C:/Windows",
+                                                   "SYSTEMROOT": "C:/Windows",
                                                    "PATH": "fixture-sdk"}), \
                     patch.object(release, "run") as command:
                 release.smoke("fixture")
