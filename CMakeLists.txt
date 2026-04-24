@@ -78,11 +78,14 @@ if(BRIDGE_BUILD_SESSION)
         endif()
         # windeployqt otherwise skips the backend used for bilateral TLS pairing.
         get_filename_component(bridge_openssl_root "${OPENSSL_INCLUDE_DIR}" DIRECTORY)
+        if(Qt6_VERSION VERSION_GREATER_EQUAL 6.12)
+          qt_policy(SET QTP0007 NEW)
+        else()
+          # Earlier Qt writes deploy-tool arguments unquoted into its script.
+          set(bridge_openssl_root "\"${bridge_openssl_root}\"")
+        endif()
         list(APPEND bridge_deploy_options DEPLOY_TOOL_OPTIONS
           --openssl-root "${bridge_openssl_root}" --skip-plugin-types qmltooling)
-        if(Qt6_VERSION VERSION_GREATER_EQUAL 6.9)
-          qt_policy(SET QTP0007 NEW)
-        endif()
       endif()
       qt_generate_deploy_qml_app_script(TARGET bridge_gui OUTPUT_SCRIPT deploy_script
         NO_UNSUPPORTED_PLATFORM_ERROR ${bridge_deploy_options})
