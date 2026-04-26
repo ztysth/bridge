@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.25)
+# Modern Apple/MSVC linkers rescan archives; CMake can avoid redundant libraries.
+foreach(bridge_link_policy CMP0156 CMP0179)
+  if(POLICY ${bridge_link_policy})
+    cmake_policy(SET ${bridge_link_policy} NEW)
+  endif()
+endforeach()
 include(cmake/VcpkgTriplet.cmake)
 project(bridge VERSION 0.1.0 LANGUAGES CXX)
 set(CMAKE_CXX_STANDARD 23)
