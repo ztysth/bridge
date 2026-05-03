@@ -14,6 +14,42 @@ spec.loader.exec_module(release)
 class ReleaseTests(unittest.TestCase):
     commit = "a" * 40
 
+    def test_windows_deployment_passes_sdk_paths_without_literal_quotes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = release.ROOT / "cmake/DeployWindows.cmake"
+            # Capture the generated script, then let CMake's real parser execute
+            # it against a deployment-command seam that checks the received path.
+            driver = root / "driver.cmake"
+            driver.write_text('''
+function(qt_generate_deploy_script)
+  cmake_parse_arguments(arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "" ${ARGN})
+  string(REPLACE "$<TARGET_FILE:fixture>" "fixture.exe" content "${arg_CONTENT}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" "${content}")
+  set(${arg_OUTPUT_SCRIPT} "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" PARENT_SCOPE)
+endfunction()
+function(qt_deploy_qml_imports)
+  set(bridge_plugins "fixture-plugin.dll" PARENT_SCOPE)
+endfunction()
+function(qt_deploy_runtime_dependencies)
+  cmake_parse_arguments(arg "GENERATE_QT_CONF" "EXECUTABLE" "ADDITIONAL_MODULES;DEPLOY_TOOL_OPTIONS" ${ARGN})
+  list(GET arg_DEPLOY_TOOL_OPTIONS 1 actual)
+  if(NOT actual STREQUAL expected)
+    message(FATAL_ERROR "SDK root argument was split or contains literal quotes")
+  endif()
+  if(NOT arg_ADDITIONAL_MODULES STREQUAL "fixture-plugin.dll" OR NOT arg_GENERATE_QT_CONF)
+    message(FATAL_ERROR "QML runtime deployment was lost")
+  endif()
+endfunction()
+include("''' + helper.as_posix() + '''")
+foreach(expected "C:/sdk" "C:/SDK with spaces")
+  bridge_windows_deploy_script(fixture "${expected}" script)
+  include("${script}")
+endforeach()
+''')
+            release.subprocess.run(["cmake", "-P", str(driver)], cwd=root, check=True,
+                                   capture_output=True, text=True, timeout=15)
+
     def test_windows_child_error_mode_is_restored_after_success_or_failure(self):
         for error in (None, release.subprocess.CalledProcessError(5, ["fixture"])):
             kernel = Mock()
