@@ -10,6 +10,7 @@ import shutil
 import struct
 import subprocess
 import sys
+import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
 ARCHITECTURES = {"linux": {"x86_64", "arm64", "riscv64"},
@@ -127,13 +128,28 @@ def diagnose_windows(build):
         run(probe, "--success", timeout=30)
     except subprocess.CalledProcessError as error:
         print(f"Integration diagnostic exit code: {error.returncode}", flush=True)
+    # Isolate whether OpenSSL's default key-exchange groups cause this native
+    # crash. This configuration is diagnostic-only and is never packaged.
+    with tempfile.TemporaryDirectory(prefix="bridge-tls-diagnostic-") as directory:
+        config = Path(directory) / "openssl.cnf"
+        config.write_text("openssl_conf=bridge_diagnostic\n[bridge_diagnostic]\n"
+                          "ssl_conf=tls_settings\n[tls_settings]\n"
+                          "system_default=group_probe\n[group_probe]\nGroups=P-256\n")
+        environment = dict(os.environ)
+        environment["OPENSSL_CONF"] = str(config)
+        print("Testing TLS with the P-256 group in an isolated diagnostic process.", flush=True)
+        try:
+            run(probe, "explicit local receive and bilateral TLS pairing complete cleanly",
+                env=environment, timeout=30)
+        except subprocess.CalledProcessError as error:
+            print(f"P-256 group diagnostic exit code: {error.returncode}", flush=True)
     architecture = "arm64" if os.environ.get("BRIDGE_CI_ARCH") == "arm64" else "x64"
     debugger = (Path(os.environ["ProgramFiles(x86)"]) / "Windows Kits" / "10" /
                 "Debuggers" / architecture / "cdb.exe")
     if not debugger.is_file():
         print(f"The runner has no {architecture} Windows SDK command-line debugger.")
         return
-    run(debugger, "-c", "sxe av; g; .ecxr; kp; q", probe,
+    run(debugger, "-c", "sxe av; g; .exr -1; .ecxr; kp 20; q", probe,
         "explicit local receive and bilateral TLS pairing complete cleanly", timeout=90)
 
 

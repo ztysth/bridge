@@ -121,9 +121,13 @@ endforeach()
             error = release.subprocess.CalledProcessError(0xC0000005, ["fixture"])
             with patch.dict(release.os.environ, {"ProgramFiles(x86)": str(root),
                                                "BRIDGE_CI_ARCH": "arm64"}), \
-                    patch.object(release, "run", side_effect=[error, None]) as command:
+                    patch.object(release, "run", side_effect=[error, None, None]) as command:
                 release.diagnose_windows(root)
             self.assertEqual(command.call_args_list[0].kwargs["timeout"], 30)
+            group_call = command.call_args_list[1]
+            self.assertEqual(group_call.kwargs["timeout"], 30)
+            self.assertIn("OPENSSL_CONF", group_call.kwargs["env"])
+            self.assertFalse(Path(group_call.kwargs["env"]["OPENSSL_CONF"]).exists())
             self.assertEqual(command.call_args.args[0], debugger)
             self.assertIn(".ecxr; kp", command.call_args.args[2])
             self.assertEqual(command.call_args.kwargs["timeout"], 90)
