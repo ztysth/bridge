@@ -1,7 +1,9 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import struct
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, call, patch
@@ -9,10 +11,30 @@ from unittest.mock import Mock, call, patch
 spec = importlib.util.spec_from_file_location("release", Path(__file__).parents[2] / ".github/package.py")
 release = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(release)
+probe_spec = importlib.util.spec_from_file_location(
+    "openssl_probe", release.ROOT / ".github/openssl-tls-probe.py")
+openssl_probe = importlib.util.module_from_spec(probe_spec)
+with patch.dict(sys.modules, {"package": release}):
+    probe_spec.loader.exec_module(openssl_probe)
 
 
 class ReleaseTests(unittest.TestCase):
     commit = "a" * 40
+
+    def test_independent_tls_probe_rejects_missing_sdk(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaises(ValueError):
+                openssl_probe.probe(Path(tmp))
+
+    @unittest.skipUnless(sys.platform == "linux" and shutil.which("openssl"),
+                         "The independent CLI harness is validated on Linux")
+    def test_independent_tls_probe_uses_real_openssl_and_cleans_children(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            sdk = Path(tmp)
+            executable = sdk / "tools/openssl/openssl.exe"
+            executable.parent.mkdir(parents=True)
+            executable.symlink_to(shutil.which("openssl"))
+            openssl_probe.probe(sdk)
 
     def test_windows_deployment_passes_sdk_paths_without_literal_quotes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -25,6 +47,7 @@ class ReleaseTests(unittest.TestCase):
 function(qt_generate_deploy_script)
   cmake_parse_arguments(arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "" ${ARGN})
   string(REPLACE "$<TARGET_FILE:fixture>" "fixture.exe" content "${arg_CONTENT}")
+  string(REPLACE "$<TARGET_FILE_NAME:fixture>" "fixture.exe" content "${content}")
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" "${content}")
   set(${arg_OUTPUT_SCRIPT} "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" PARENT_SCOPE)
 endfunction()
@@ -41,14 +64,35 @@ function(qt_deploy_runtime_dependencies)
     message(FATAL_ERROR "QML runtime deployment was lost")
   endif()
 endfunction()
+set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
 include("''' + helper.as_posix() + '''")
+function(file)
+  if(ARGV0 STREQUAL "GET_RUNTIME_DEPENDENCIES")
+    if(BRIDGE_MISSING_DEP)
+      set(bridge_unresolved_dlls "missing.dll" PARENT_SCOPE)
+    else()
+      set(bridge_runtime_dlls "${CMAKE_CURRENT_BINARY_DIR}/sdk/bin/nonqt.dll" PARENT_SCOPE)
+      set(bridge_unresolved_dlls "" PARENT_SCOPE)
+    endif()
+  else()
+    _file(${ARGV})
+  endif()
+endfunction()
 foreach(expected "C:/sdk" "C:/SDK with spaces")
   bridge_windows_deploy_script(fixture "${expected}" script)
   include("${script}")
 endforeach()
 ''')
+            (root / "sdk/bin").mkdir(parents=True)
+            (root / "sdk/bin/nonqt.dll").write_bytes(b"dependency")
+            (root / "sdk/bin/unused.dll").write_bytes(b"unused")
             release.subprocess.run(["cmake", "-P", str(driver)], cwd=root, check=True,
                                    capture_output=True, text=True, timeout=15)
+            self.assertEqual((root / "stage/bin/nonqt.dll").read_bytes(), b"dependency")
+            self.assertFalse((root / "stage/bin/unused.dll").exists())
+            with self.assertRaises(release.subprocess.CalledProcessError):
+                release.subprocess.run(["cmake", "-DBRIDGE_MISSING_DEP=ON", "-P", str(driver)],
+                                       cwd=root, check=True, capture_output=True, text=True, timeout=15)
 
     def test_windows_child_error_mode_is_restored_after_success_or_failure(self):
         for error in (None, release.subprocess.CalledProcessError(5, ["fixture"])):

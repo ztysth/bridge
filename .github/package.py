@@ -1,5 +1,6 @@
 """Validate and package native builds; no network access or credential handling."""
 import argparse
+from contextlib import contextmanager
 import ctypes
 import hashlib
 import json
@@ -18,7 +19,8 @@ ARCHITECTURES = {"linux": {"x86_64", "arm64", "riscv64"},
 EXTENSIONS = {"linux": ".deb", "windows": ".zip", "macos": ".dmg"}
 
 
-def run(*args, env=None, timeout=None):
+@contextmanager
+def child_error_mode():
     set_error_mode = None
     previous_mode = 0
     if os.name == "nt":
@@ -33,10 +35,15 @@ def run(*args, env=None, timeout=None):
         previous_mode = kernel.GetErrorMode()
         set_error_mode(previous_mode | 0x0001 | 0x0002 | 0x8000)
     try:
-        subprocess.run(list(map(str, args)), check=True, env=env, timeout=timeout)
+        yield
     finally:
         if set_error_mode is not None:
             set_error_mode(previous_mode)
+
+
+def run(*args, env=None, timeout=None):
+    with child_error_mode():
+        subprocess.run(list(map(str, args)), check=True, env=env, timeout=timeout)
 
 
 def version(root=ROOT):

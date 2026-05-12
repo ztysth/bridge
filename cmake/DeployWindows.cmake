@@ -10,6 +10,31 @@ qt_deploy_runtime_dependencies(
   DEPLOY_TOOL_OPTIONS
     --openssl-root \"${openssl_root}\"
     --skip-plugin-types qmltooling
-)")
+)
+# windeployqt collects Qt, but does not deploy its non-Qt SDK dependencies.
+file(GLOB bridge_sdk_dlls \"${openssl_root}/bin/*.dll\")
+file(GLOB bridge_staged_dlls \"\${CMAKE_INSTALL_PREFIX}/bin/*.dll\")
+file(GLOB_RECURSE bridge_staged_plugins \"\${CMAKE_INSTALL_PREFIX}/Qt6/*.dll\")
+file(GET_RUNTIME_DEPENDENCIES
+  EXECUTABLES \"\${CMAKE_INSTALL_PREFIX}/bin/$<TARGET_FILE_NAME:${target}>\"
+  MODULES \${bridge_staged_plugins}
+  DIRECTORIES \"${openssl_root}/bin\"
+  PRE_EXCLUDE_REGEXES \"^api-ms-\" \"^ext-ms-\"
+  POST_INCLUDE_FILES \${bridge_sdk_dlls} \${bridge_staged_dlls}
+  POST_EXCLUDE_REGEXES \".*\"
+  RESOLVED_DEPENDENCIES_VAR bridge_runtime_dlls
+  UNRESOLVED_DEPENDENCIES_VAR bridge_unresolved_dlls
+)
+if(bridge_unresolved_dlls)
+  message(FATAL_ERROR \"Unresolved Windows runtime dependencies: \${bridge_unresolved_dlls}\")
+endif()
+foreach(bridge_dll IN LISTS bridge_runtime_dlls)
+  get_filename_component(bridge_dll_directory \"\${bridge_dll}\" DIRECTORY)
+  if(NOT bridge_dll_directory STREQUAL \"\${CMAKE_INSTALL_PREFIX}/bin\")
+    file(INSTALL DESTINATION \"\${CMAKE_INSTALL_PREFIX}/bin\"
+      TYPE SHARED_LIBRARY FILES \"\${bridge_dll}\")
+  endif()
+endforeach()
+")
   set(${output_script} "${bridge_script}" PARENT_SCOPE)
 endfunction()

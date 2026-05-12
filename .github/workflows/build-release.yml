@@ -116,7 +116,7 @@ jobs:
             --sdk "$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
       - name: Diagnose a failed Windows TLS check
         if: failure() && inputs.platform == 'windows'
-        timeout-minutes: 3
+        timeout-minutes: 4
         run: |
           bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
           env QT_FORCE_STDERR_LOGGING=1 QT_DEBUG_PLUGINS=1 \
@@ -124,6 +124,8 @@ jobs:
             QT_PLUGIN_PATH="$bridge_sdk/Qt6/plugins" \
             PATH="$(cygpath -u "$bridge_sdk/bin"):$PATH" \
             python .github/package.py diagnose-windows --build "$BRIDGE_CI_BUILD"
+          env PATH="$(cygpath -u "$bridge_sdk/bin"):$PATH" \
+            python .github/openssl-tls-probe.py "$bridge_sdk"
       - name: Preserve completed SDK packages for retries
         if: always() && inputs.platform != 'linux'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
