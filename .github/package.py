@@ -115,12 +115,15 @@ def smoke(executable):
 
 def probe_windows_transport(build, executable_directory):
     # Exercise production TLS with deployed DLLs, then remove the test executable.
-    probe = executable_directory / "bridge_integration_tests.exe"
+    # The session tool has only application dependencies; a Catch2 executable
+    # would require test-framework DLLs that correctly do not ship in the app.
+    probe = executable_directory / "bridge_session_tool.exe"
     if probe.exists():
         raise ValueError("Unexpected transport probe in the package")
     shutil.copy2(build / probe.name, probe)
     try:
-        run(probe, env=runtime_environment(), timeout=60)
+        run(sys.executable, ROOT / "tests/integration/process_pairing.py", probe,
+            env=runtime_environment(), timeout=60)
     finally:
         probe.unlink()
 

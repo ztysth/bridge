@@ -134,11 +134,13 @@ endforeach()
             build, stage = root / "build", root / "stage"
             build.mkdir()
             stage.mkdir()
-            binary = "bridge_integration_tests.exe"
+            binary = "bridge_session_tool.exe"
             (build / binary).write_bytes(b"fixture")
             for error in (None, release.subprocess.CalledProcessError(5, ["fixture"])):
                 def command(*args, **kwargs):
-                    self.assertEqual(args, (stage / binary,))
+                    self.assertEqual(args, (release.sys.executable,
+                                           release.ROOT / "tests/integration/process_pairing.py",
+                                           stage / binary))
                     self.assertEqual((stage / binary).read_bytes(), b"fixture")
                     self.assertEqual(kwargs["timeout"], 60)
                     if error is not None:
