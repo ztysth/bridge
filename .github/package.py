@@ -150,6 +150,10 @@ def diagnose_windows(build):
                 env=environment, timeout=30)
         except subprocess.CalledProcessError as error:
             print(f"P-256 group diagnostic exit code: {error.returncode}", flush=True)
+    try:
+        run(build / "bridge_openssl_probe.exe", timeout=15)
+    except subprocess.CalledProcessError as error:
+        print(f"Independent OpenSSL diagnostic exit code: {error.returncode}", flush=True)
     architecture = "arm64" if os.environ.get("BRIDGE_CI_ARCH") == "arm64" else "x64"
     debugger = (Path(os.environ["ProgramFiles(x86)"]) / "Windows Kits" / "10" /
                 "Debuggers" / architecture / "cdb.exe")

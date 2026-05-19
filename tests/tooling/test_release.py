@@ -64,7 +64,8 @@ function(qt_deploy_runtime_dependencies)
     message(FATAL_ERROR "QML runtime deployment was lost")
   endif()
 endfunction()
-set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
+set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/unused-prefix")
+set(QT_DEPLOY_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
 include("''' + helper.as_posix() + '''")
 function(file)
   if(ARGV0 STREQUAL "GET_RUNTIME_DEPENDENCIES")
@@ -165,7 +166,7 @@ endforeach()
             error = release.subprocess.CalledProcessError(0xC0000005, ["fixture"])
             with patch.dict(release.os.environ, {"ProgramFiles(x86)": str(root),
                                                "BRIDGE_CI_ARCH": "arm64"}), \
-                    patch.object(release, "run", side_effect=[error, None, None]) as command:
+                    patch.object(release, "run", side_effect=[error, None, None, None]) as command:
                 release.diagnose_windows(root)
             self.assertEqual(command.call_args_list[0].kwargs["timeout"], 30)
             group_call = command.call_args_list[1]

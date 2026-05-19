@@ -17,7 +17,7 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
   if(BRIDGE_VALGRIND)
     add_custom_target(memcheck)
     foreach(binary bridge_unit_tests bridge_io_tests bridge_integration_tests
-        bridge_transfer_tests bridge_worker_tests bridge_model_tests)
+        bridge_transfer_tests bridge_worker_tests bridge_model_tests bridge_openssl_probe)
       if(TARGET ${binary})
         add_dependencies(memcheck ${binary})
         add_custom_command(TARGET memcheck POST_BUILD
@@ -26,6 +26,12 @@ if(BUILD_TESTING AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
           VERBATIM)
       endif()
     endforeach()
+    if(TARGET bridge_openssl_probe)
+      add_custom_command(TARGET memcheck POST_BUILD
+        COMMAND ${BRIDGE_VALGRIND} --error-exitcode=99 --leak-check=full
+          --errors-for-leak-kinds=definite,indirect
+          $<TARGET_FILE:bridge_openssl_probe> --reject-legacy VERBATIM)
+    endif()
     foreach(tool checkpoint session)
       if(TARGET bridge_${tool}_tool)
         add_dependencies(memcheck bridge_${tool}_tool)
