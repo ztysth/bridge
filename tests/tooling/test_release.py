@@ -21,6 +21,31 @@ with patch.dict(sys.modules, {"package": release}):
 class ReleaseTests(unittest.TestCase):
     commit = "a" * 40
 
+    def test_arm64_compiler_workaround_keeps_other_ports_optimized(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            driver = Path(tmp) / "triplet.cmake"
+            triplet = release.ROOT / "cmake/release-triplets/arm64-windows.cmake"
+            driver.write_text('''
+function(verify_port PORT)
+  include("''' + triplet.as_posix() + '''")
+  if(NOT VCPKG_CRT_LINKAGE STREQUAL "dynamic" OR NOT VCPKG_BUILD_TYPE STREQUAL "release")
+    message(FATAL_ERROR "The workaround must preserve the release runtime")
+  endif()
+  if(PORT STREQUAL "openssl")
+    if(NOT VCPKG_C_FLAGS_RELEASE STREQUAL "/Od" OR NOT VCPKG_CXX_FLAGS_RELEASE STREQUAL "/Od")
+      message(FATAL_ERROR "The isolated SDK workaround is missing")
+    endif()
+  elseif(DEFINED VCPKG_C_FLAGS_RELEASE OR DEFINED VCPKG_CXX_FLAGS_RELEASE)
+    message(FATAL_ERROR "Optimization was changed for an unrelated port")
+  endif()
+endfunction()
+foreach(port openssl qtbase qtdeclarative catch2)
+  verify_port("${port}")
+endforeach()
+''')
+            release.subprocess.run(["cmake", "-P", str(driver)], check=True,
+                                   capture_output=True, text=True, timeout=15)
+
     def test_independent_tls_probe_rejects_missing_sdk(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(ValueError):
