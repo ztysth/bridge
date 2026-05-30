@@ -91,34 +91,49 @@ function(qt_deploy_runtime_dependencies)
 endfunction()
 set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/unused-prefix")
 set(QT_DEPLOY_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
+set(ENV{SystemRoot} "${CMAKE_CURRENT_BINARY_DIR}/Windows")
 include("''' + helper.as_posix() + '''")
 function(file)
   if(ARGV0 STREQUAL "GET_RUNTIME_DEPENDENCIES")
     if(BRIDGE_MISSING_DEP)
       set(bridge_unresolved_dlls "missing.dll" PARENT_SCOPE)
+    elseif(BRIDGE_FOREIGN_DEP)
+      set(bridge_runtime_dlls "${CMAKE_CURRENT_BINARY_DIR}/sdk-sibling/foreign.dll" PARENT_SCOPE)
     else()
-      set(bridge_runtime_dlls "${CMAKE_CURRENT_BINARY_DIR}/sdk/bin/nonqt.dll" PARENT_SCOPE)
+      set(bridge_runtime_dlls "${expected}/bin/nonqt.dll;${CMAKE_CURRENT_BINARY_DIR}/Windows/System32/os.dll" PARENT_SCOPE)
       set(bridge_unresolved_dlls "" PARENT_SCOPE)
     endif()
   else()
     _file(${ARGV})
+    if(ARGV0 STREQUAL "REAL_PATH" OR ARGV0 STREQUAL "TO_CMAKE_PATH")
+      set(${ARGV2} "${${ARGV2}}" PARENT_SCOPE)
+    elseif(ARGV0 STREQUAL "GLOB" OR ARGV0 STREQUAL "GLOB_RECURSE")
+      set(${ARGV1} "${${ARGV1}}" PARENT_SCOPE)
+    endif()
   endif()
 endfunction()
-foreach(expected "C:/sdk" "C:/SDK with spaces")
+foreach(expected "${CMAKE_CURRENT_BINARY_DIR}/sdk" "${CMAKE_CURRENT_BINARY_DIR}/SDK with spaces")
   bridge_windows_deploy_script(fixture "${expected}" script)
   include("${script}")
 endforeach()
 ''')
-            (root / "sdk/bin").mkdir(parents=True)
-            (root / "sdk/bin/nonqt.dll").write_bytes(b"dependency")
-            (root / "sdk/bin/unused.dll").write_bytes(b"unused")
+            for sdk_name in ("sdk", "SDK with spaces"):
+                (root / sdk_name / "bin").mkdir(parents=True)
+                (root / sdk_name / "bin/nonqt.dll").write_bytes(b"dependency")
+                (root / sdk_name / "bin/unused.dll").write_bytes(b"unused")
+            (root / "Windows/System32").mkdir(parents=True)
+            (root / "Windows/System32/os.dll").write_bytes(b"system")
+            (root / "sdk-sibling").mkdir()
+            (root / "sdk-sibling/foreign.dll").write_bytes(b"foreign")
             release.subprocess.run(["cmake", "-P", str(driver)], cwd=root, check=True,
                                    capture_output=True, text=True, timeout=15)
             self.assertEqual((root / "stage/bin/nonqt.dll").read_bytes(), b"dependency")
             self.assertFalse((root / "stage/bin/unused.dll").exists())
-            with self.assertRaises(release.subprocess.CalledProcessError):
-                release.subprocess.run(["cmake", "-DBRIDGE_MISSING_DEP=ON", "-P", str(driver)],
-                                       cwd=root, check=True, capture_output=True, text=True, timeout=15)
+            self.assertFalse((root / "stage/bin/os.dll").exists())
+            for failure in ("BRIDGE_MISSING_DEP", "BRIDGE_FOREIGN_DEP"):
+                with self.assertRaises(release.subprocess.CalledProcessError):
+                    release.subprocess.run(["cmake", f"-D{failure}=ON", "-P", str(driver)],
+                                           cwd=root, check=True, capture_output=True, text=True, timeout=15)
 
     def test_windows_child_error_mode_is_restored_after_success_or_failure(self):
         for error in (None, release.subprocess.CalledProcessError(5, ["fixture"])):
@@ -133,6 +148,54 @@ endforeach()
                     with self.assertRaises(release.subprocess.CalledProcessError):
                         release.run("fixture", timeout=15)
             self.assertEqual(kernel.SetErrorMode.call_args_list, [call(0x8023), call(0x0020)])
+
+    @unittest.skipUnless(sys.platform == "linux" and shutil.which("cc"),
+                         "The real resolver fixture needs a native Linux compiler")
+    def test_deployment_resolves_transitive_sdk_libraries(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sdk, stage = root / "SDK with spaces", root / "stage"
+            for directory in (sdk / "bin", stage / "bin"):
+                directory.mkdir(parents=True)
+            source = root / "fixture.c"
+            source.write_text("int required(void) { return 42; }\n")
+            release.subprocess.run(["cc", "-shared", "-fPIC", "-nostdlib", str(source),
+                                    "-Wl,-soname,required.dll", "-o", str(sdk / "bin/required.dll")],
+                                   check=True, capture_output=True, timeout=15)
+            source.write_text("extern int required(void); int wrapper(void) { return required(); }\n")
+            release.subprocess.run(["cc", "-shared", "-fPIC", "-nostdlib", str(source),
+                                    "-Wl,-soname,wrapper.dll", "-L" + str(sdk / "bin"),
+                                    "-l:required.dll", "-o", str(stage / "bin/wrapper.dll")],
+                                   check=True, capture_output=True, timeout=15)
+            source.write_text("extern int wrapper(void); void _start(void) { (void)wrapper(); }\n")
+            release.subprocess.run(["cc", "-nostdlib", str(source), "-L" + str(stage / "bin"),
+                                    "-l:wrapper.dll", "-Wl,-rpath,$ORIGIN",
+                                    "-Wl,-rpath-link," + str(sdk / "bin"),
+                                    "-o", str(stage / "bin/fixture.exe")],
+                                   check=True, capture_output=True, timeout=15)
+            driver = root / "driver.cmake"
+            driver.write_text('''
+function(qt_generate_deploy_script)
+  cmake_parse_arguments(arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "" ${ARGN})
+  string(REPLACE "$<TARGET_FILE:fixture>" "fixture.exe" content "${arg_CONTENT}")
+  string(REPLACE "$<TARGET_FILE_NAME:fixture>" "fixture.exe" content "${content}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" "${content}")
+  set(${arg_OUTPUT_SCRIPT} "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" PARENT_SCOPE)
+endfunction()
+function(qt_deploy_qml_imports)
+endfunction()
+function(qt_deploy_runtime_dependencies)
+endfunction()
+set(QT_DEPLOY_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
+set(ENV{SystemRoot} "${CMAKE_CURRENT_BINARY_DIR}/Windows")
+include("''' + (release.ROOT / "cmake/DeployWindows.cmake").as_posix() + '''")
+bridge_windows_deploy_script(fixture "${CMAKE_CURRENT_BINARY_DIR}/SDK with spaces" script)
+include("${script}")
+''')
+            release.subprocess.run(["cmake", "-P", str(driver)], cwd=root, check=True,
+                                   capture_output=True, text=True, timeout=15)
+            self.assertEqual((stage / "bin/required.dll").read_bytes(),
+                             (sdk / "bin/required.dll").read_bytes())
 
     def test_package_smoke_uses_host_backend_without_sdk_environment(self):
         sdk_variables = ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QML_IMPORT_PATH",
