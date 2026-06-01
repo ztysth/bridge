@@ -1,6 +1,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import platform
 import shutil
 import struct
 import sys
@@ -16,10 +17,60 @@ probe_spec = importlib.util.spec_from_file_location(
 openssl_probe = importlib.util.module_from_spec(probe_spec)
 with patch.dict(sys.modules, {"package": release}):
     probe_spec.loader.exec_module(openssl_probe)
+PE_OBJDUMP = shutil.which("llvm-objdump") or shutil.which("llvm-objdump-18")
 
 
 class ReleaseTests(unittest.TestCase):
     commit = "a" * 40
+
+    def test_inspection_adapter_normalizes_output_and_preserves_failure(self):
+        adapter = release.ROOT / "tools/objdump.py"
+        for code in (0, 7):
+            result = release.subprocess.run(
+                [sys.executable, str(adapter), sys.executable, "-c",
+                 f"import sys; sys.stdout.buffer.write(b'    DLL Name: required.dll\\r\\n'); sys.exit({code})"],
+                capture_output=True, timeout=15)
+            self.assertEqual(result.stdout, b"DLL Name: required.dll\n")
+            self.assertEqual(result.returncode, code)
+        result = release.subprocess.run([sys.executable, str(adapter)],
+                                        capture_output=True, timeout=15)
+        self.assertEqual(result.returncode, 2)
+
+    @unittest.skipUnless(sys.platform == "linux" and platform.machine() == "x86_64" and
+                         PE_OBJDUMP and shutil.which("clang") and shutil.which("ld"),
+                         "Real PE inspection fixture needs the native x86 LLVM/GNU tools")
+    def test_cmake_resolves_real_pe_imports_through_the_adapter(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "dependency.c").write_text("int required(void) { return 42; }\n")
+            (root / "exports.def").write_text("EXPORTS\n required\n")
+            (root / "main.c").write_text(
+                "__declspec(dllimport) int required(void); void entry(void) { (void)required(); }\n")
+            for command in (
+                    ["clang", "--target=x86_64-pc-windows-msvc", "-c", "dependency.c", "-o", "dependency.obj"],
+                    ["ld", "-mi386pep", "--dll", "--entry", "required", "--out-implib", "required.lib",
+                     "-o", "required.dll", "dependency.obj", "exports.def"],
+                    ["clang", "--target=x86_64-pc-windows-msvc", "-c", "main.c", "-o", "main.obj"],
+                    ["ld", "-mi386pep", "--entry", "entry", "-o", "fixture.exe", "main.obj", "required.lib"]):
+                release.subprocess.run(command, cwd=root, check=True,
+                                       capture_output=True, timeout=15)
+            driver = root / "inspect.cmake"
+            driver.write_text('''
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM "windows+pe")
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL "objdump")
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "''' +
+                              Path(sys.executable).as_posix() + ";" +
+                              (release.ROOT / "tools/objdump.py").as_posix() + ";" +
+                              Path(PE_OBJDUMP).as_posix() + '''")
+file(GET_RUNTIME_DEPENDENCIES EXECUTABLES "${CMAKE_CURRENT_LIST_DIR}/fixture.exe"
+  DIRECTORIES "${CMAKE_CURRENT_LIST_DIR}"
+  RESOLVED_DEPENDENCIES_VAR libraries UNRESOLVED_DEPENDENCIES_VAR missing)
+if(missing OR NOT libraries STREQUAL "${CMAKE_CURRENT_LIST_DIR}/required.dll")
+  message(FATAL_ERROR "PE import resolution failed: ${libraries}; ${missing}")
+endif()
+''')
+            release.subprocess.run(["cmake", "-P", str(driver)], check=True,
+                                   capture_output=True, text=True, timeout=15)
 
     def test_arm64_compiler_workaround_keeps_other_ports_optimized(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -70,7 +121,7 @@ endforeach()
             driver = root / "driver.cmake"
             driver.write_text('''
 function(qt_generate_deploy_script)
-  cmake_parse_arguments(arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "" ${ARGN})
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "")
   string(REPLACE "$<TARGET_FILE:fixture>" "fixture.exe" content "${arg_CONTENT}")
   string(REPLACE "$<TARGET_FILE_NAME:fixture>" "fixture.exe" content "${content}")
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" "${content}")
@@ -91,6 +142,9 @@ function(qt_deploy_runtime_dependencies)
 endfunction()
 set(CMAKE_INSTALL_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/unused-prefix")
 set(QT_DEPLOY_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
+# This seam checks script arguments and copy policy; the real scanner has its
+# own compiled-binary fixture and native Windows deployment gate.
+set(CMAKE_HOST_WIN32 FALSE)
 set(ENV{SystemRoot} "${CMAKE_CURRENT_BINARY_DIR}/Windows")
 include("''' + helper.as_posix() + '''")
 function(file)
@@ -176,7 +230,7 @@ endforeach()
             driver = root / "driver.cmake"
             driver.write_text('''
 function(qt_generate_deploy_script)
-  cmake_parse_arguments(arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "" ${ARGN})
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "")
   string(REPLACE "$<TARGET_FILE:fixture>" "fixture.exe" content "${arg_CONTENT}")
   string(REPLACE "$<TARGET_FILE_NAME:fixture>" "fixture.exe" content "${content}")
   file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" "${content}")

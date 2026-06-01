@@ -12,6 +12,16 @@ qt_deploy_runtime_dependencies(
     --skip-plugin-types qmltooling
 )
 # windeployqt collects Qt, but does not deploy its non-Qt SDK dependencies.
+if(CMAKE_HOST_WIN32)
+  # Select the command and its matching CMake parser together. An empty import
+  # scan cannot validate deployment; LLVM also inspects native ARM64 PE files.
+  find_program(bridge_runtime_objdump NAMES llvm-objdump REQUIRED)
+  find_package(Python3 REQUIRED COMPONENTS Interpreter)
+  set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL objdump)
+  set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND
+    \"\${Python3_EXECUTABLE};${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../tools/objdump.py;\${bridge_runtime_objdump}\")
+  message(STATUS \"Windows import inspection: \${bridge_runtime_objdump}\")
+endif()
 file(GLOB_RECURSE bridge_staged_plugins \"\${QT_DEPLOY_PREFIX}/Qt6/*.dll\")
 file(GET_RUNTIME_DEPENDENCIES
   EXECUTABLES \"\${QT_DEPLOY_PREFIX}/bin/$<TARGET_FILE_NAME:${target}>\"
