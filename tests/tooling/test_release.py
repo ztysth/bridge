@@ -71,6 +71,42 @@ endif()
 ''')
             release.subprocess.run(["cmake", "-P", str(driver)], check=True,
                                    capture_output=True, text=True, timeout=15)
+            # Application imports resolve beside the executable. Plugin imports
+            # must use that same staged DLL before its original SDK copy.
+            sdk, stage = root / "SDK with spaces", root / "stage"
+            for directory in (sdk / "bin", stage / "bin", stage / "Qt6/plugins"):
+                directory.mkdir(parents=True)
+            shutil.copy2(root / "required.dll", sdk / "bin/required.dll")
+            shutil.copy2(root / "required.dll", stage / "bin/required.dll")
+            shutil.copy2(root / "fixture.exe", stage / "bin/fixture.exe")
+            release.subprocess.run(
+                ["ld", "-mi386pep", "--dll", "--entry", "entry", "-o",
+                 str(stage / "Qt6/plugins/plugin.dll"), "main.obj", "required.lib"],
+                cwd=root, check=True, capture_output=True, timeout=15)
+            driver.write_text(driver.read_text().split("file(GET_RUNTIME_DEPENDENCIES")[0] + '''
+function(qt6_generate_deploy_script)
+  cmake_parse_arguments(PARSE_ARGV 0 arg "" "TARGET;OUTPUT_SCRIPT;CONTENT" "")
+  string(REPLACE "$<TARGET_FILE:fixture>" "fixture.exe" content "${arg_CONTENT}")
+  string(REPLACE "$<TARGET_FILE_NAME:fixture>" "fixture.exe" content "${content}")
+  file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" "${content}")
+  set(${arg_OUTPUT_SCRIPT} "${CMAKE_CURRENT_BINARY_DIR}/deployment.cmake" PARENT_SCOPE)
+endfunction()
+function(qt_deploy_qml_imports)
+endfunction()
+function(qt_deploy_runtime_dependencies)
+endfunction()
+set(CMAKE_HOST_WIN32 FALSE)
+set(QT_DEPLOY_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
+set(ENV{SystemRoot} "${CMAKE_CURRENT_BINARY_DIR}/Windows")
+include("''' + (release.ROOT / "cmake/DeployWindows.cmake").as_posix() + '''")
+bridge_windows_deploy_script(fixture "${CMAKE_CURRENT_BINARY_DIR}/SDK with spaces" script)
+include("${script}")
+if(NOT bridge_runtime_dlls STREQUAL "${QT_DEPLOY_PREFIX}/bin/required.dll")
+  message(FATAL_ERROR "Plugin imports did not prefer the staged application DLL")
+endif()
+''')
+            release.subprocess.run(["cmake", "-P", str(driver)], cwd=root, check=True,
+                                   capture_output=True, text=True, timeout=15)
 
     def test_arm64_compiler_workaround_keeps_other_ports_optimized(self):
         with tempfile.TemporaryDirectory() as tmp:

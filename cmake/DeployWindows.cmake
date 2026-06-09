@@ -27,7 +27,7 @@ file(GLOB_RECURSE bridge_staged_plugins \"\${QT_DEPLOY_PREFIX}/Qt6/*.dll\")
 file(GET_RUNTIME_DEPENDENCIES
   EXECUTABLES \"\${QT_DEPLOY_PREFIX}/bin/$<TARGET_FILE_NAME:${target}>\"
   MODULES \${bridge_staged_plugins}
-  DIRECTORIES \"${openssl_root}/bin\"
+  DIRECTORIES \"\${QT_DEPLOY_PREFIX}/bin\" \"${openssl_root}/bin\"
   PRE_EXCLUDE_REGEXES \"^api-ms-\" \"^ext-ms-\"
   RESOLVED_DEPENDENCIES_VAR bridge_runtime_dlls
   UNRESOLVED_DEPENDENCIES_VAR bridge_unresolved_dlls
