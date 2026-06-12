@@ -134,6 +134,8 @@ TEST_CASE("single-file transfer pause barriers preserve bytes until both users c
         });
         pair.start(source, root.path().toStdString());
         pair.run();
+        CAPTURE(mode, pair.error_a, pair.error_b, pair.sender.status().toStdString(),
+                pair.receiver.status().toStdString(), pair.logs.str());
         REQUIRE(requested);
         REQUIRE(checked);
         REQUIRE(pair.success_a);
