@@ -7,10 +7,12 @@
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickItem>
+#include <QQuickStyle>
 #include <QQuickWindow>
 #include <QTemporaryDir>
 #include <QTimer>
 int main(int argc, char** argv) {
+    QQuickStyle::setStyle(QStringLiteral("Basic"));
     QGuiApplication application(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("bridge"));
     SessionModel model;
@@ -27,6 +29,8 @@ int main(int argc, char** argv) {
     window->setPersistentGraphics(false);
     std::optional<QTemporaryDir> drop_fixture;
     if (application.arguments().contains(QStringLiteral("--smoke-test"))) {
+        if (QQuickStyle::name() != QStringLiteral("Basic"))
+            return 1;
         // Borrowed QML objects; smoke verifies that the commands are present and
         // disabled before a transfer, in addition to loading the QML module.
         for (const auto* name : {"pauseButton", "continueButton"}) {

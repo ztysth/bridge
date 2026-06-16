@@ -417,7 +417,7 @@ include("${script}")
     def test_qml_runtime_requires_used_modules_without_window_compatibility_import(self):
         with tempfile.TemporaryDirectory() as tmp:
             stage = Path(tmp)
-            modules = ("QtQuick", "QtQuick/Controls", "QtQuick/Layouts",
+            modules = ("QtQuick", "QtQuick/Controls", "QtQuick/Controls/Basic", "QtQuick/Layouts",
                        "QtQuick/Dialogs", "QtQml", "QtQuick/Templates")
             for module in modules:
                 qmldir = stage / "qml" / module / "qmldir"

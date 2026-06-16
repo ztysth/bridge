@@ -170,7 +170,7 @@ def diagnose_windows(build):
 def validate_qml_runtime(stage):
     # Main.qml imports and their shared QML/Controls runtime dependencies.
     # QtQuick.Window is a compatibility import, not a required separate module.
-    for module in ("QtQuick", "QtQuick/Controls", "QtQuick/Layouts",
+    for module in ("QtQuick", "QtQuick/Controls", "QtQuick/Controls/Basic", "QtQuick/Layouts",
                    "QtQuick/Dialogs", "QtQml", "QtQuick/Templates"):
         if not list(stage.rglob(module + "/qmldir")):
             raise ValueError(f"QML runtime deployment is incomplete: {module}")
