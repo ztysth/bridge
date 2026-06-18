@@ -90,7 +90,7 @@ jobs:
           else
             "$VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
           fi
-      - name: Build and test native shared-runtime SDK
+      - name: Install the pinned SDK and configure
         if: inputs.platform != 'linux'
         run: |
           cmake --preset release -B "$BRIDGE_CI_BUILD" \
@@ -98,6 +98,16 @@ jobs:
             -DVCPKG_HOST_TRIPLET="$BRIDGE_TRIPLET" \
             -DVCPKG_INSTALLED_DIR="$RUNNER_TEMP/vcpkg-installed" \
             -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/cmake/release-triplets"
+      - name: Preserve completed SDK packages for retries
+        if: always() && inputs.platform != 'linux'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ${{ runner.temp }}/vcpkg-binary-cache
+          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
+      - name: Build and test the native application
+        id: native-tests
+        if: inputs.platform != 'linux'
+        run: |
           cmake --build "$BRIDGE_CI_BUILD" --parallel 2
           bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
           bridge_sdk_bin="$bridge_sdk/bin"
@@ -111,11 +121,14 @@ jobs:
             QML_IMPORT_PATH="$bridge_sdk/Qt6/qml" \
             PATH="$bridge_sdk_bin:$PATH" \
             python .github/package.py test --build "$BRIDGE_CI_BUILD"
+      - name: Deploy and validate the native package
+        if: inputs.platform != 'linux'
+        run: |
           python .github/package.py package --build "$BRIDGE_CI_BUILD" --output "$BRIDGE_CI_DIST" \
             --platform "$BRIDGE_PLATFORM" --arch "$BRIDGE_CI_ARCH" \
             --sdk "$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
       - name: Diagnose a failed Windows TLS check
-        if: failure() && inputs.platform == 'windows'
+        if: failure() && inputs.platform == 'windows' && steps.native-tests.outcome == 'failure'
         timeout-minutes: 4
         run: |
           bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
@@ -124,12 +137,6 @@ jobs:
             QT_PLUGIN_PATH="$bridge_sdk/Qt6/plugins" \
             PATH="$(cygpath -u "$bridge_sdk/bin"):$PATH" \
             python .github/package.py diagnose-windows --build "$BRIDGE_CI_BUILD"
-      - name: Preserve completed SDK packages for retries
-        if: always() && inputs.platform != 'linux'
-        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
-        with:
-          path: ${{ runner.temp }}/vcpkg-binary-cache
-          key: ${{ steps.sdk-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: bridge-${{ inputs.platform }}-${{ inputs.arch }}
