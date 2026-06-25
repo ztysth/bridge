@@ -188,6 +188,9 @@ set(QT_DEPLOY_PREFIX "${CMAKE_CURRENT_BINARY_DIR}/stage")
 # own compiled-binary fixture and native Windows deployment gate.
 set(CMAKE_HOST_WIN32 FALSE)
 set(ENV{SystemRoot} "${CMAKE_CURRENT_BINARY_DIR}/Windows")
+if(BRIDGE_SYSTEM_ALIAS)
+  set(ENV{SystemRoot} "${CMAKE_CURRENT_BINARY_DIR}/WindowsAlias")
+endif()
 include("''' + helper.as_posix() + '''")
 function(file)
   if(ARGV0 STREQUAL "GET_RUNTIME_DEPENDENCIES")
@@ -221,11 +224,18 @@ endforeach()
             (root / "Windows/System32/os.dll").write_bytes(b"system")
             (root / "sdk-sibling").mkdir()
             (root / "sdk-sibling/foreign.dll").write_bytes(b"foreign")
-            release.subprocess.run(["cmake", "-P", str(driver)], cwd=root, check=True,
-                                   capture_output=True, text=True, timeout=15)
+            result = release.subprocess.run(["cmake", "-P", str(driver)], cwd=root,
+                                            capture_output=True, text=True, timeout=15)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertEqual((root / "stage/bin/nonqt.dll").read_bytes(), b"dependency")
             self.assertFalse((root / "stage/bin/unused.dll").exists())
             self.assertFalse((root / "stage/bin/os.dll").exists())
+            if release.os.name != "nt":
+                (root / "WindowsAlias").symlink_to(root / "Windows", target_is_directory=True)
+                result = release.subprocess.run(
+                    ["cmake", "-DBRIDGE_SYSTEM_ALIAS=ON", "-P", str(driver)], cwd=root,
+                    capture_output=True, text=True, timeout=15)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             for failure in ("BRIDGE_MISSING_DEP", "BRIDGE_FOREIGN_DEP"):
                 with self.assertRaises(release.subprocess.CalledProcessError):
                     release.subprocess.run(["cmake", f"-D{failure}=ON", "-P", str(driver)],
