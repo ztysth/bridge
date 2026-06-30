@@ -1,4 +1,5 @@
 import importlib.util
+import errno
 import json
 from pathlib import Path
 import platform
@@ -456,7 +457,7 @@ include("${script}")
             with self.assertRaises(ValueError):
                 release.verify_assets(root, "0.1.0", self.commit)
 
-    def test_linux_packaging_keeps_cpack_scratch_outside_release_assets(self):
+    def test_linux_packaging_keeps_scratch_outside_assets_across_filesystems(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             build = root / "build"
@@ -478,11 +479,13 @@ include("${script}")
 
             with patch.object(release, "run", side_effect=command), \
                     patch.object(release, "smoke") as smoke, \
+                    patch.object(Path, "rename", side_effect=OSError(errno.EXDEV, "Cross-device link")), \
                     patch.object(release.subprocess, "check_output",
                                  side_effect=["Qt 6.4.2\n", self.commit + "\n"]):
                 release.package(build, output, "linux", "x86_64")
             smoke.assert_called_once_with("/usr/bin/bridge_gui")
             self.assertTrue((build / "release-stage/_CPack_Packages").is_dir())
+            self.assertEqual((output / "bridge-0.1.0-linux-x86_64.deb").read_bytes(), b"package")
             self.assertEqual({p.name for p in output.iterdir()}, {
                 "bridge-0.1.0-linux-x86_64.deb", "bridge-0.1.0-linux-x86_64.deb.sha256",
                 "bridge-0.1.0-linux-x86_64.json", "bridge-0.1.0-linux-x86_64.json.sha256"})

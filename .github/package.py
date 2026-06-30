@@ -193,7 +193,8 @@ def package(build, output, system, architecture, sdk=None, emulated=False):
         if len(candidates) != 1:
             raise ValueError("Expected exactly one DEB")
         asset = output / (stem + ".deb")
-        candidates[0].rename(asset)
+        # The emulated guest mounts build and release output on separate volumes.
+        shutil.copy2(candidates[0], asset)
         # Exercise the actual installed package, with dependency resolution by apt.
         run("sudo", "apt-get", "install", "-y", asset.resolve())
         smoke("/usr/bin/bridge_gui")
