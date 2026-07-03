@@ -24,6 +24,10 @@ if(CMAKE_HOST_WIN32)
   message(STATUS \"Windows import inspection: \${bridge_runtime_objdump}\")
 endif()
 file(GLOB_RECURSE bridge_staged_plugins \"\${QT_DEPLOY_PREFIX}/Qt6/*.dll\")
+# Newer CMake normalizes Windows separators before dependency path filtering.
+if(POLICY CMP0207)
+  cmake_policy(SET CMP0207 NEW)
+endif()
 file(GET_RUNTIME_DEPENDENCIES
   EXECUTABLES \"\${QT_DEPLOY_PREFIX}/bin/$<TARGET_FILE_NAME:${target}>\"
   MODULES \${bridge_staged_plugins}
