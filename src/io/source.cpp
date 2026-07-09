@@ -1,63 +1,20 @@
-#include "bridge/io/path.hpp"
 #include "bridge/io/source.hpp"
+#include "bridge/io/path.hpp"
 #include "bridge/security/hash.hpp"
+#include "filesystem.hpp"
 #include <algorithm>
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
 namespace bridge::io {
-namespace {
-Error storage_error() {
-    return Error{errno == EACCES ? ErrorCode::permission_denied : ErrorCode::io_failed, errno};
-}
-bool unchanged(const struct stat& a, const struct stat& b) {
-#ifdef __APPLE__
-    const auto am = a.st_mtimespec, bm = b.st_mtimespec, ac = a.st_ctimespec, bc = b.st_ctimespec;
-#else
-    const auto am = a.st_mtim, bm = b.st_mtim, ac = a.st_ctim, bc = b.st_ctim;
-#endif
-    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size &&
-           am.tv_sec == bm.tv_sec && am.tv_nsec == bm.tv_nsec && ac.tv_sec == bc.tv_sec &&
-           ac.tv_nsec == bc.tv_nsec;
-}
-} // namespace
 struct SourceFile::Impl {
-    explicit Impl(int descriptor) : fd(descriptor) {}
-    ~Impl() {
-        if (fd >= 0)
-            ::close(fd);
-    }
-    Impl(const Impl&) = delete;
-    Impl& operator=(const Impl&) = delete;
-    int fd;
-    struct stat snapshot {};
+    explicit Impl(native::File descriptor) : fd(std::move(descriptor)) {}
+    native::File fd;
+    native::Metadata snapshot;
     FileManifest description;
-    Result<void> stable() const {
-        struct stat current {};
-        if (::fstat(fd, &current) != 0)
-            return std::unexpected(storage_error());
-        if (!unchanged(snapshot, current))
-            return std::unexpected(Error{ErrorCode::source_changed});
-        return {};
-    }
+    Result<void> stable() const { return native::stable(fd.get(), snapshot); }
     Result<void> read_at(std::span<std::uint8_t> buffer, std::uint64_t offset,
                          std::stop_token stop) const {
-        while (!buffer.empty()) {
-            if (stop.stop_requested())
-                return std::unexpected(Error{ErrorCode::cancelled});
-            const auto count =
-                ::pread(fd, buffer.data(), buffer.size(), static_cast<off_t>(offset));
-            if (count < 0 && errno == EINTR)
-                continue;
-            if (count < 0)
-                return std::unexpected(storage_error());
-            if (count == 0)
-                return std::unexpected(Error{ErrorCode::source_changed});
-            auto length = static_cast<std::size_t>(count);
-            offset += length;
-            buffer = buffer.subspan(length);
-        }
+        auto read = native::read_at(fd.get(), buffer, offset, ErrorCode::source_changed, stop);
+        if (!read)
+            return read;
         return stable();
     }
 };
@@ -68,23 +25,21 @@ SourceFile& SourceFile::operator=(SourceFile&&) noexcept = default;
 bool supports_file_io() { return true; }
 Result<SourceFile> SourceFile::open(const std::filesystem::path& path, TransferId id,
                                     std::stop_token stop) {
-    static_assert(sizeof(off_t) >= 8);
     if (stop.stop_requested())
         return std::unexpected(Error{ErrorCode::cancelled});
-    const auto name = path.filename().string();
+    const auto name = native::filename(path);
     if (path.native().find('\0') != std::string::npos || name.find('/') != std::string::npos ||
         !validate_relative_path(name) || name.starts_with(".bridge-"))
         return std::unexpected(Error{ErrorCode::invalid_path});
-    auto impl = std::make_unique<Impl>(-1);
-    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
-    if (fd < 0)
-        return std::unexpected(storage_error());
-    impl->fd = fd;
-    if (::fstat(fd, &impl->snapshot) != 0)
-        return std::unexpected(storage_error());
-    if (!S_ISREG(impl->snapshot.st_mode) || impl->snapshot.st_size < 0)
-        return std::unexpected(Error{ErrorCode::invalid_path});
-    impl->description = {id, name, static_cast<std::uint64_t>(impl->snapshot.st_size), {}};
+    auto file = native::open_path(path, native::Kind::regular);
+    if (!file)
+        return std::unexpected(file.error());
+    auto impl = std::make_unique<Impl>(std::move(*file));
+    auto info = native::metadata(impl->fd.get());
+    if (!info)
+        return std::unexpected(info.error());
+    impl->snapshot = *info;
+    impl->description = {id, name, info->size, {}};
     auto valid = validate_manifest(impl->description);
     if (!valid)
         return std::unexpected(valid.error());

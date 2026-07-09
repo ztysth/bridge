@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
+#include "../windows_junction.hpp"
 using namespace bridge;
 namespace {
 struct TemporaryRoot {
@@ -31,7 +32,6 @@ Digest digest(std::span<const std::uint8_t> data) {
 FileManifest manifest(std::span<const std::uint8_t> data) {
     return {{1}, "received.bin", data.size(), digest(data)};
 }
-#ifndef _WIN32
 std::filesystem::path checkpoint_path(const TemporaryRoot& root, std::string_view suffix) {
     for (const auto& entry : std::filesystem::directory_iterator(root.path))
         if (entry.path().filename().string().ends_with(suffix))
@@ -61,19 +61,7 @@ std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {
     REQUIRE(stream.good());
     return bytes;
 }
-#endif
 } // namespace
-#ifdef _WIN32
-TEST_CASE("Windows checkpoint IO fails closed until native handle support exists") {
-    TemporaryRoot root;
-    auto description = manifest({});
-    REQUIRE(io::PartialFile::create(root.path, description).error().code ==
-            ErrorCode::unsupported_platform);
-    REQUIRE(io::PartialFile::resume(root.path, description).error().code ==
-            ErrorCode::unsupported_platform);
-    REQUIRE(std::filesystem::is_empty(root.path));
-}
-#else
 TEST_CASE("checkpoint cancellation leaves data recoverable and never publishes early") {
     TemporaryRoot root;
     const std::array<std::uint8_t, 3> data{1, 2, 3};
@@ -244,7 +232,7 @@ TEST_CASE("hostile complete journal records and corrupted partials fail closed")
         if (mode == 7)
             std::filesystem::resize_file(partial, chunk_size - 1);
         if (mode == 8)
-            std::filesystem::resize_file(journal, 1ULL << 32U);
+            std::filesystem::resize_file(journal, chunk_size * 8ULL);
         if (mode == 9) {
             auto encoded = read_file(journal);
             patch(journal, encoded.size(), std::span(encoded).subspan(header_size, 80));
@@ -289,7 +277,12 @@ TEST_CASE("native storage errors preserve redacted numeric context") {
     auto failure = io::PartialFile::create(root.path / "missing", manifest({}));
     REQUIRE_FALSE(failure);
     REQUIRE(failure.error().code == ErrorCode::io_failed);
+#ifdef _WIN32
+    REQUIRE((failure.error().native_code == ERROR_PATH_NOT_FOUND ||
+             failure.error().native_code == ERROR_FILE_NOT_FOUND));
+#else
     REQUIRE(failure.error().native_code == ENOENT);
+#endif
 }
 TEST_CASE("destination conflicts including symlinks never overwrite") {
     for (bool before_create : {false, true}) {
@@ -302,14 +295,22 @@ TEST_CASE("destination conflicts including symlinks never overwrite") {
             file << "preserve";
         }
         if (before_create) {
+#ifdef _WIN32
+            std::filesystem::create_hard_link(target, root.path / description.name);
+#else
             std::filesystem::create_symlink(target, root.path / description.name);
+#endif
             REQUIRE(io::PartialFile::create(root.path, description).error().code ==
                     ErrorCode::destination_conflict);
         } else {
             auto writer = io::PartialFile::create(root.path, description);
             REQUIRE(writer);
             REQUIRE(writer->append(data, digest(data)));
+#ifdef _WIN32
+            std::filesystem::create_hard_link(target, root.path / description.name);
+#else
             std::filesystem::create_symlink(target, root.path / description.name);
+#endif
             REQUIRE(writer->finish().error().code == ErrorCode::destination_conflict);
         }
         const auto original = read_file(target);
@@ -327,10 +328,17 @@ TEST_CASE("symlink hardlink and special checkpoint objects cannot escape root") 
             std::filesystem::create_hard_link(path, outside.path / "linked");
         } else {
             REQUIRE(std::filesystem::remove(path));
+#ifdef _WIN32
+            if (mode == 3)
+                std::filesystem::create_directory(path);
+            else
+                bridge::test::directory_link(outside.path, path);
+#else
             if (mode == 3)
                 REQUIRE(::mkfifo(path.c_str(), 0600) == 0);
             else
                 std::filesystem::create_symlink(outside.path / "untouched", path);
+#endif
         }
         REQUIRE_FALSE(io::PartialFile::resume(root.path, description));
         REQUIRE_FALSE(std::filesystem::exists(outside.path / "untouched"));
@@ -346,7 +354,7 @@ TEST_CASE("flat portable names and root handles resist path redirection") {
         REQUIRE_FALSE(io::PartialFile::create(root.path, invalid));
     }
     const auto alias = outside.path / "root-link";
-    std::filesystem::create_directory_symlink(root.path, alias);
+    bridge::test::directory_link(root.path, alias);
     REQUIRE_FALSE(io::PartialFile::create(alias, description));
     REQUIRE_FALSE(
         io::PartialFile::create(std::filesystem::path(alias.string() + "/"), description));
@@ -358,7 +366,7 @@ TEST_CASE("flat portable names and root handles resist path redirection") {
     const auto original = root.path;
     root.path = outside.path / "moved";
     std::filesystem::rename(original, root.path);
-    std::filesystem::create_directory_symlink(outside.path, original);
+    bridge::test::directory_link(outside.path, original);
     REQUIRE(writer->finish());
     REQUIRE(std::filesystem::exists(root.path / description.name));
     REQUIRE_FALSE(std::filesystem::exists(outside.path / description.name));
@@ -379,4 +387,3 @@ TEST_CASE("large logical files preserve 64-bit manifests without allocating file
     REQUIRE(resumed->durable_bytes() == chunk_size);
     REQUIRE_FALSE(resumed->finish());
 }
-#endif

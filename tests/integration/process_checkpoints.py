@@ -17,7 +17,7 @@ def main():
     expected = bytes([23]) * chunk_size + bytes([7, 9, 11]) + bytes(28)
     for action, durable in [("crash", chunk_size), ("crash-data", 0), ("crash-torn", 0),
                             ("crash-record", chunk_size), ("crash-publish", len(expected))]:
-        with tempfile.TemporaryDirectory(prefix="bridge-restart-") as directory:
+        with tempfile.TemporaryDirectory(prefix="bridge-restart-\u6d4b\u8bd5-") as directory:
             root = Path(directory)
             # An intentional hard-exit process is not a leak-test target. The
             # production operations also have normally destructed Memcheck tests.
@@ -27,7 +27,7 @@ def main():
             resumed = subprocess.run([*memcheck, binary, "resume", root],
                                      capture_output=True, timeout=90 if memcheck else 20)
             assert resumed.returncode == 0, (action, resumed.returncode, resumed.stderr)
-            assert resumed.stdout == f"resumed_bytes={durable}\n".encode(), resumed.stdout
+            assert resumed.stdout.replace(b"\r\n", b"\n") == f"resumed_bytes={durable}\n".encode(), resumed.stdout
             assert (root / "received.bin").read_bytes() == expected
             assert [path.name for path in root.iterdir()] == ["received.bin"]
     print("five abrupt-exit checkpoint recovery cases passed")

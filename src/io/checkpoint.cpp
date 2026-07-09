@@ -1,121 +1,25 @@
-#include "bridge/core/diagnostics.hpp"
 #include "bridge/io/checkpoint.hpp"
+#include "bridge/core/diagnostics.hpp"
 #include "bridge/io/path.hpp"
 #include "bridge/security/hash.hpp"
+#include "filesystem.hpp"
 #include <algorithm>
-#include <cerrno>
-#include <fcntl.h>
-#include <sys/file.h>
-#include <sys/stat.h>
-#include <unistd.h>
 #include <utility>
 #include <vector>
 namespace bridge::io {
 namespace {
-static_assert(sizeof(off_t) >= 8, "Checkpoint IO requires 64-bit filesystem offsets");
+using native::File;
+using native::Handle;
+using native::metadata;
+using native::open_root;
+using native::read_at;
+using native::same_file;
+using native::sync;
+using native::write_at;
 constexpr std::size_t header_prefix_size = 68;
 constexpr std::size_t record_size = 80;
-class Descriptor {
-  public:
-    explicit Descriptor(int value = -1) : value_(value) {}
-    ~Descriptor() {
-        // Do not retry close on EINTR: some kernels have already released the fd.
-        if (value_ >= 0)
-            ::close(value_);
-    }
-    Descriptor(Descriptor&& other) noexcept : value_(std::exchange(other.value_, -1)) {}
-    Descriptor& operator=(Descriptor&& other) noexcept {
-        Descriptor temporary(std::move(other));
-        std::swap(value_, temporary.value_);
-        return *this;
-    }
-    Descriptor(const Descriptor&) = delete;
-    Descriptor& operator=(const Descriptor&) = delete;
-    int get() const { return value_; }
-
-  private:
-    int value_;
-};
-Error system_error(int code = errno) {
-    switch (code) {
-    case ENOSPC:
-    case EDQUOT:
-        return {ErrorCode::disk_full, code};
-    case EACCES:
-    case EPERM:
-        return {ErrorCode::permission_denied, code};
-    case EEXIST:
-        return {ErrorCode::destination_conflict, code};
-    case ELOOP:
-        return {ErrorCode::invalid_path, code};
-    default:
-        return {ErrorCode::io_failed, code};
-    }
-}
-Result<void> sync(int descriptor) {
-    int result = 0;
-    do {
-        result = ::fsync(descriptor);
-    } while (result != 0 && errno == EINTR);
-    if (result != 0)
-        return std::unexpected(system_error());
-    return {};
-}
-Result<void> read_at(int fd, std::span<std::uint8_t> output, std::uint64_t offset) {
-    while (!output.empty()) {
-        const auto count = ::pread(fd, output.data(), output.size(), static_cast<off_t>(offset));
-        if (count < 0 && errno == EINTR)
-            continue;
-        if (count < 0)
-            return std::unexpected(system_error());
-        if (count == 0)
-            return std::unexpected(Error{ErrorCode::invalid_checkpoint});
-        output = output.subspan(static_cast<std::size_t>(count));
-        offset += static_cast<std::uint64_t>(count);
-    }
-    return {};
-}
-Result<void> write_at(int fd, std::span<const std::uint8_t> input, std::uint64_t offset) {
-    while (!input.empty()) {
-        const auto count = ::pwrite(fd, input.data(), input.size(), static_cast<off_t>(offset));
-        if (count < 0 && errno == EINTR)
-            continue;
-        if (count <= 0)
-            return std::unexpected(count < 0 ? system_error() : Error{ErrorCode::io_failed});
-        input = input.subspan(static_cast<std::size_t>(count));
-        offset += static_cast<std::uint64_t>(count);
-    }
-    return {};
-}
-Result<struct stat> metadata(int fd) {
-    struct stat value {};
-    if (::fstat(fd, &value) != 0)
-        return std::unexpected(system_error());
-    if (!S_ISREG(value.st_mode) || value.st_size < 0)
-        return std::unexpected(Error{ErrorCode::invalid_checkpoint});
-    return value;
-}
-Result<Descriptor> open_regular(int root, const std::string& name, int flags) {
-    Descriptor fd(::openat(root, name.c_str(), flags | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK, 0600));
-    if (fd.get() < 0)
-        return std::unexpected(system_error());
-    auto info = metadata(fd.get());
-    if (!info)
-        return std::unexpected(info.error());
-    return fd;
-}
-Result<Descriptor> open_root(const std::filesystem::path& path) {
-    if (path.empty() || path.native().find('\0') != std::string::npos)
-        return std::unexpected(Error{ErrorCode::invalid_path});
-    auto selected = path;
-    // A trailing slash makes open resolve a symlink as an intermediate component,
-    // bypassing O_NOFOLLOW. Strip empty final components, preserving filesystem /.
-    while (selected.has_relative_path() && selected.filename().empty())
-        selected = selected.parent_path();
-    Descriptor root(::open(selected.c_str(), O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW));
-    if (root.get() < 0)
-        return std::unexpected(system_error());
-    return root;
+Result<File> open_regular(Handle root, const std::string& name, native::Access access) {
+    return native::open_at(root, name, access);
 }
 Result<void> validate(const FileManifest& manifest) {
     auto valid = validate_manifest(manifest);
@@ -187,20 +91,17 @@ std::string stem(const TransferId& id) {
     }
     return name;
 }
-bool same_file(const struct stat& first, const struct stat& second) {
-    return first.st_dev == second.st_dev && first.st_ino == second.st_ino;
-}
 } // namespace
 struct PartialFile::Impl {
     FileManifest manifest;
-    Descriptor root, journal, partial;
+    File root, journal, partial;
     std::string partial_name, journal_name;
     std::uint64_t durable = 0;
     std::uint64_t journal_end = 0;
     bool poisoned = false, published = false, complete = false, partial_named = true;
     CheckpointInjection injection;
     Failpoint trigger;
-    Impl(FileManifest value, Descriptor directory, CheckpointInjection fault)
+    Impl(FileManifest value, File directory, CheckpointInjection fault)
         : manifest(std::move(value)), root(std::move(directory)),
           partial_name(stem(manifest.id) + ".part"), journal_name(stem(manifest.id) + ".journal"),
           injection(fault), trigger(fault.hit) {}
@@ -220,27 +121,26 @@ struct PartialFile::Impl {
         auto info = metadata(journal.get());
         if (!info)
             return std::unexpected(info.error());
-        if (info->st_nlink != 1)
+        if (info->links != 1)
             return std::unexpected(Error{ErrorCode::invalid_checkpoint});
-        if (::flock(journal.get(), LOCK_EX | LOCK_NB) != 0)
-            return std::unexpected(errno == EWOULDBLOCK ? Error{ErrorCode::checkpoint_busy}
-                                                        : system_error());
-        return {};
+        return native::lock(journal);
     }
     Result<void> cleanup() {
         auto synced = storage(sync(root.get()));
         if (!synced)
             return synced;
         if (partial_named) {
-            if (::unlinkat(root.get(), partial_name.c_str(), 0) != 0)
-                return storage(std::unexpected(system_error()));
+            auto removed = storage(native::remove(root.get(), partial_name));
+            if (!removed)
+                return removed;
             partial_named = false;
             synced = storage(sync(root.get()));
             if (!synced)
                 return synced;
         }
-        if (::unlinkat(root.get(), journal_name.c_str(), 0) != 0)
-            return storage(std::unexpected(system_error()));
+        auto removed = storage(native::remove(root.get(), journal_name));
+        if (!removed)
+            return removed;
         synced = storage(sync(root.get()));
         if (!synced)
             return synced;
@@ -251,7 +151,7 @@ struct PartialFile::Impl {
         auto info = metadata(partial.get());
         if (!info)
             return std::unexpected(info.error());
-        if (static_cast<std::uint64_t>(info->st_size) != manifest.size)
+        if (static_cast<std::uint64_t>(info->size) != manifest.size)
             return std::unexpected(Error{ErrorCode::invalid_checkpoint});
         auto hash = security::Sha256::create();
         if (!hash)
@@ -279,7 +179,7 @@ struct PartialFile::Impl {
             return std::unexpected(expected.error());
         if (!info)
             return std::unexpected(info.error());
-        const auto disk_size = static_cast<std::uint64_t>(info->st_size);
+        const auto disk_size = static_cast<std::uint64_t>(info->size);
         const auto header_size = expected->size();
         if (disk_size < header_size ||
             disk_size > header_size + chunk_count(manifest.size) * record_size + record_size - 1)
@@ -298,19 +198,16 @@ struct PartialFile::Impl {
         if (header != *expected)
             return std::unexpected(Error{ErrorCode::invalid_checkpoint});
 
-        struct stat final_info {};
-        const bool final_exists =
-            ::fstatat(root.get(), manifest.name.c_str(), &final_info, AT_SYMLINK_NOFOLLOW) == 0;
-        if (!final_exists && errno != ENOENT)
-            return std::unexpected(system_error());
-        auto opened = open_regular(root.get(), partial_name, O_RDWR);
+        auto final_info = native::child_metadata(root.get(), manifest.name);
+        if (!final_info)
+            return std::unexpected(final_info.error());
+        const bool final_exists = final_info->has_value();
+        auto opened = open_regular(root.get(), partial_name, native::Access::update);
         if (!opened) {
-            // Missing partial is legal only during validated publication recovery.
-            struct stat unused {};
-            if (::fstatat(root.get(), partial_name.c_str(), &unused, AT_SYMLINK_NOFOLLOW) == 0 ||
-                errno != ENOENT || !final_exists)
+            auto present = native::child_metadata(root.get(), partial_name);
+            if (!present || present->has_value() || !final_exists)
                 return std::unexpected(opened.error());
-            opened = open_regular(root.get(), manifest.name, O_RDONLY);
+            opened = open_regular(root.get(), manifest.name, native::Access::update);
             partial_named = false;
         }
         if (!opened)
@@ -320,13 +217,14 @@ struct PartialFile::Impl {
         if (!partial_info)
             return std::unexpected(partial_info.error());
         if (final_exists) {
-            if (!S_ISREG(final_info.st_mode) || !same_file(*partial_info, final_info))
+            if ((**final_info).kind != native::Kind::regular ||
+                !same_file(*partial_info, **final_info))
                 return std::unexpected(Error{ErrorCode::destination_conflict});
             published = true;
         }
         const auto expected_links = published && partial_named ? 2U : 1U;
-        if (partial_info->st_nlink != expected_links ||
-            static_cast<std::uint64_t>(partial_info->st_size) > manifest.size)
+        if (partial_info->links != expected_links ||
+            static_cast<std::uint64_t>(partial_info->size) > manifest.size)
             return std::unexpected(Error{ErrorCode::invalid_checkpoint});
         const auto records = (disk_size - header_size) / record_size;
         if (records > chunk_count(manifest.size))
@@ -373,16 +271,19 @@ struct PartialFile::Impl {
                 return std::unexpected(digest.error());
             if (durable != manifest.size || *digest != manifest.digest ||
                 disk_size != journal_end ||
-                static_cast<std::uint64_t>(partial_info->st_size) != manifest.size)
+                static_cast<std::uint64_t>(partial_info->size) != manifest.size)
                 return std::unexpected(Error{ErrorCode::checksum_mismatch});
             return cleanup();
         }
         if (stop.stop_requested())
             return std::unexpected(Error{ErrorCode::cancelled});
         // No mutations until every complete record and acknowledged byte validated.
-        if (::ftruncate(journal.get(), static_cast<off_t>(journal_end)) != 0 ||
-            ::ftruncate(partial.get(), static_cast<off_t>(durable)) != 0)
-            return storage(std::unexpected(system_error()));
+        auto resized = storage(native::truncate(journal.get(), journal_end));
+        if (!resized)
+            return resized;
+        resized = storage(native::truncate(partial.get(), durable));
+        if (!resized)
+            return resized;
         auto synced = storage(sync(partial.get()));
         if (!synced)
             return synced;
@@ -402,20 +303,23 @@ Result<PartialFile> PartialFile::create(const std::filesystem::path& root,
     auto directory = open_root(root);
     if (!directory)
         return std::unexpected(directory.error());
+    auto compatible = native::receive_root(directory->get());
+    if (!compatible)
+        return std::unexpected(compatible.error());
     auto impl = std::make_unique<Impl>(manifest, std::move(*directory), injection);
-    struct stat existing {};
-    if (::fstatat(impl->root.get(), manifest.name.c_str(), &existing, AT_SYMLINK_NOFOLLOW) == 0)
+    auto existing = native::child_metadata(impl->root.get(), manifest.name);
+    if (!existing)
+        return std::unexpected(existing.error());
+    if (existing->has_value())
         return std::unexpected(Error{ErrorCode::destination_conflict});
-    if (errno != ENOENT)
-        return std::unexpected(system_error());
-    auto journal = open_regular(impl->root.get(), impl->journal_name, O_RDWR | O_CREAT | O_EXCL);
+    auto journal = open_regular(impl->root.get(), impl->journal_name, native::Access::create_file);
     if (!journal)
         return std::unexpected(journal.error());
     impl->journal = std::move(*journal);
     auto locked = impl->lock();
     if (!locked)
         return std::unexpected(locked.error());
-    auto partial = open_regular(impl->root.get(), impl->partial_name, O_RDWR | O_CREAT | O_EXCL);
+    auto partial = open_regular(impl->root.get(), impl->partial_name, native::Access::create_file);
     if (!partial)
         return std::unexpected(partial.error());
     impl->partial = std::move(*partial);
@@ -425,7 +329,7 @@ Result<PartialFile> PartialFile::create(const std::filesystem::path& root,
     auto written = write_at(impl->journal.get(), *header, 0);
     if (!written)
         return std::unexpected(written.error());
-    for (int descriptor : {impl->partial.get(), impl->journal.get(), impl->root.get()}) {
+    for (Handle descriptor : {impl->partial.get(), impl->journal.get(), impl->root.get()}) {
         auto synced = sync(descriptor);
         if (!synced)
             return std::unexpected(synced.error());
@@ -444,29 +348,30 @@ Result<PartialFile> PartialFile::resume(const std::filesystem::path& root,
     auto directory = open_root(root);
     if (!directory)
         return std::unexpected(directory.error());
+    auto compatible = native::receive_root(directory->get());
+    if (!compatible)
+        return std::unexpected(compatible.error());
     auto impl = std::make_unique<Impl>(manifest, std::move(*directory), injection);
-    auto journal = open_regular(impl->root.get(), impl->journal_name, O_RDWR);
+    auto journal = open_regular(impl->root.get(), impl->journal_name, native::Access::update);
     if (!journal) {
-        struct stat journal_info {};
-        if (::fstatat(impl->root.get(), impl->journal_name.c_str(), &journal_info,
-                      AT_SYMLINK_NOFOLLOW) == 0 ||
-            errno != ENOENT)
+        auto present = native::child_metadata(impl->root.get(), impl->journal_name);
+        if (!present || present->has_value())
             return std::unexpected(journal.error());
         // A lost completion notification may follow journal cleanup. Explicit
         // resume may recognize a fully matching final file, without writing it.
-        auto final = open_regular(impl->root.get(), manifest.name, O_RDONLY);
+        auto final = open_regular(impl->root.get(), manifest.name, native::Access::update);
         if (!final)
             return std::unexpected(final.error());
         impl->partial = std::move(*final);
         auto info = metadata(impl->partial.get());
-        if (!info || info->st_nlink != 1)
+        if (!info || info->links != 1)
             return std::unexpected(info ? Error{ErrorCode::invalid_checkpoint} : info.error());
         auto digest = impl->hash_file(stop);
         if (!digest)
             return std::unexpected(digest.error());
         if (*digest != manifest.digest)
             return std::unexpected(Error{ErrorCode::destination_conflict});
-        for (int descriptor : {impl->partial.get(), impl->root.get()}) {
+        for (Handle descriptor : {impl->partial.get(), impl->root.get()}) {
             auto synced = sync(descriptor);
             if (!synced)
                 return std::unexpected(synced.error());
@@ -560,22 +465,22 @@ Result<void> PartialFile::finish(std::stop_token stop) {
         return impl_->storage(std::unexpected(digest.error()));
     if (*digest != impl_->manifest.digest)
         return impl_->storage(std::unexpected(Error{ErrorCode::checksum_mismatch}));
-    struct stat named {};
+    auto named = native::child_metadata(impl_->root.get(), impl_->partial_name);
     auto actual = metadata(impl_->partial.get());
     if (!actual)
         return impl_->storage(std::unexpected(actual.error()));
-    if (::fstatat(impl_->root.get(), impl_->partial_name.c_str(), &named, AT_SYMLINK_NOFOLLOW) !=
-            0 ||
-        !S_ISREG(named.st_mode) || !same_file(*actual, named) || actual->st_nlink != 1)
+    if (!named || !named->has_value() || (**named).kind != native::Kind::regular ||
+        !same_file(*actual, **named) || actual->links != 1)
         return impl_->storage(std::unexpected(Error{ErrorCode::invalid_checkpoint}));
     auto synced = impl_->storage(sync(impl_->partial.get()));
     if (!synced)
         return synced;
     if (stop.stop_requested())
         return impl_->storage(std::unexpected(Error{ErrorCode::cancelled}));
-    if (::linkat(impl_->root.get(), impl_->partial_name.c_str(), impl_->root.get(),
-                 impl_->manifest.name.c_str(), 0) != 0)
-        return impl_->storage(std::unexpected(system_error()));
+    auto linked = impl_->storage(native::link(impl_->partial.get(), impl_->root.get(),
+                                              impl_->partial_name, impl_->manifest.name));
+    if (!linked)
+        return linked;
     impl_->published = true;
     auto fault = impl_->fault(CheckpointFault::after_publish);
     if (!fault)

@@ -1,63 +1,25 @@
 #include "bridge/io/folder.hpp"
 #include "bridge/io/path.hpp"
 #include "bridge/security/hash.hpp"
+#include "filesystem.hpp"
 #include <algorithm>
 #include <array>
-#include <cerrno>
-#include <cstdio>
-#include <dirent.h>
-#include <fcntl.h>
 #include <map>
-#include <sys/file.h>
-#include <sys/stat.h>
-#ifdef __linux__
-#include <sys/syscall.h>
-#endif
-#include <unistd.h>
 #include <utility>
 namespace bridge::io {
 namespace {
-class Fd {
-  public:
-    explicit Fd(int fd = -1) : fd_(fd) {}
-    ~Fd() {
-        if (fd_ >= 0)
-            ::close(fd_);
-    }
-    Fd(Fd&& other) noexcept : fd_(std::exchange(other.fd_, -1)) {}
-    Fd& operator=(Fd&& other) noexcept {
-        Fd temporary(std::move(other));
-        std::swap(fd_, temporary.fd_);
-        return *this;
-    }
-    Fd(const Fd&) = delete;
-    Fd& operator=(const Fd&) = delete;
-    int get() const { return fd_; }
-    int release() { return std::exchange(fd_, -1); }
-
-  private:
-    int fd_;
-};
-struct DirCloser {
-    void operator()(DIR* dir) const { ::closedir(dir); }
-};
-using Directory = std::unique_ptr<DIR, DirCloser>;
-Error storage_error(int code = errno) {
-    switch (code) {
-    case ENOSPC:
-    case EDQUOT:
-        return {ErrorCode::disk_full, code};
-    case EACCES:
-    case EPERM:
-        return {ErrorCode::permission_denied, code};
-    case EEXIST:
-        return {ErrorCode::destination_conflict, code};
-    case ELOOP:
-    case ENOTDIR:
-        return {ErrorCode::invalid_path, code};
-    default:
-        return {ErrorCode::io_failed, code};
-    }
+using native::File;
+using native::Handle;
+using native::Metadata;
+using native::normalized;
+using native::open_root;
+using native::stable;
+using native::sync;
+Result<File> directory_at(Handle parent, const std::string& name) {
+    return native::open_at(parent, name, native::Access::read, native::Kind::directory);
+}
+Result<std::vector<native::Entry>> list(Handle file, std::size_t& count, std::stop_token stop) {
+    return native::list(file, count, maximum_folder_entries, stop);
 }
 std::string folded(std::string value) {
     for (auto& c : value)
@@ -80,88 +42,6 @@ Result<void> safe_path(const std::string& name) {
     } while (true);
     return {};
 }
-std::filesystem::path normalized(std::filesystem::path path) {
-    while (path.has_relative_path() && path.filename().empty())
-        path = path.parent_path();
-    return path;
-}
-Result<Fd> directory_at(int parent, const std::string& name) {
-    Fd fd(::openat(parent, name.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC));
-    if (fd.get() < 0)
-        return std::unexpected(storage_error());
-    return fd;
-}
-Result<Fd> open_root(const std::filesystem::path& selected) {
-    auto path = normalized(selected);
-    if (path.empty() || path.native().find('\0') != std::string::npos)
-        return std::unexpected(Error{ErrorCode::invalid_path});
-    return directory_at(AT_FDCWD, path.string());
-}
-Result<void> sync_fd(int fd) {
-    int result = 0;
-    do {
-        result = ::fsync(fd);
-    } while (result != 0 && errno == EINTR);
-    if (result != 0)
-        return std::unexpected(storage_error());
-    return {};
-}
-bool same_snapshot(const struct stat& a, const struct stat& b) {
-#ifdef __APPLE__
-    const auto am = a.st_mtimespec, bm = b.st_mtimespec, ac = a.st_ctimespec, bc = b.st_ctimespec;
-#else
-    const auto am = a.st_mtim, bm = b.st_mtim, ac = a.st_ctim, bc = b.st_ctim;
-#endif
-    return a.st_dev == b.st_dev && a.st_ino == b.st_ino && a.st_size == b.st_size &&
-           am.tv_sec == bm.tv_sec && am.tv_nsec == bm.tv_nsec && ac.tv_sec == bc.tv_sec &&
-           ac.tv_nsec == bc.tv_nsec;
-}
-Result<void> stable(int fd, const struct stat& before) {
-    struct stat after {};
-    if (::fstat(fd, &after) != 0)
-        return std::unexpected(storage_error());
-    if (!same_snapshot(before, after))
-        return std::unexpected(Error{ErrorCode::source_changed});
-    return {};
-}
-struct Entry {
-    std::string name;
-    struct stat info {};
-};
-Result<std::vector<Entry>> list(int fd, std::size_t& count, std::stop_token stop) {
-    Fd copy(::dup(fd));
-    if (copy.get() < 0)
-        return std::unexpected(storage_error());
-    // fdopendir assumes ownership only after success.
-    Directory dir(::fdopendir(copy.get()));
-    if (!dir)
-        return std::unexpected(storage_error());
-    static_cast<void>(copy.release());
-    ::rewinddir(dir.get());
-    std::vector<Entry> entries;
-    while (true) {
-        if (stop.stop_requested())
-            return std::unexpected(Error{ErrorCode::cancelled});
-        errno = 0;
-        const auto* item = ::readdir(dir.get());
-        if (!item) {
-            if (errno != 0)
-                return std::unexpected(storage_error());
-            break;
-        }
-        const std::string name(item->d_name);
-        if (name == "." || name == "..")
-            continue;
-        if (++count > maximum_folder_entries)
-            return std::unexpected(Error{ErrorCode::invalid_manifest});
-        Entry entry{name, {}};
-        if (::fstatat(fd, name.c_str(), &entry.info, AT_SYMLINK_NOFOLLOW) != 0)
-            return std::unexpected(storage_error());
-        entries.push_back(std::move(entry));
-    }
-    std::ranges::sort(entries, {}, &Entry::name);
-    return entries;
-}
 std::array<std::uint8_t, 11> header(std::uint8_t type, std::size_t length, std::uint64_t size) {
     std::array<std::uint8_t, 11> out{};
     out[0] = type;
@@ -178,29 +58,23 @@ std::uint64_t number(std::span<const std::uint8_t> bytes) {
     return value;
 }
 struct Writer {
-    int fd;
+    Handle fd;
     std::uint64_t bytes = 0;
     Result<void> write(std::span<const std::uint8_t> input) {
         if (input.size() > maximum_file_size - bytes)
             return std::unexpected(Error{ErrorCode::invalid_manifest});
-        bytes += input.size();
-        while (!input.empty()) {
-            const auto count = ::write(fd, input.data(), input.size());
-            if (count < 0 && errno == EINTR)
-                continue;
-            if (count <= 0)
-                return std::unexpected(count < 0 ? storage_error() : Error{ErrorCode::io_failed});
-            input = input.subspan(static_cast<std::size_t>(count));
-        }
-        return {};
+        auto result = native::write_at(fd, input, bytes);
+        if (result)
+            bytes += input.size();
+        return result;
     }
 };
-Result<void> pack(int directory, const std::string& prefix, Writer& writer,
+Result<void> pack(Handle directory, const std::string& prefix, Writer& writer,
                   std::vector<std::uint8_t>& buffer, std::map<std::string, bool>& names,
                   std::size_t& count, std::stop_token stop) {
-    struct stat before {};
-    if (::fstat(directory, &before) != 0)
-        return std::unexpected(storage_error());
+    auto before = native::metadata(directory);
+    if (!before)
+        return std::unexpected(before.error());
     auto entries = list(directory, count, stop);
     if (!entries)
         return std::unexpected(entries.error());
@@ -211,20 +85,20 @@ Result<void> pack(int directory, const std::string& prefix, Writer& writer,
         auto safe = safe_path(path);
         if (!safe)
             return safe;
-        const bool is_directory = S_ISDIR(entry.info.st_mode);
-        if ((!is_directory && !S_ISREG(entry.info.st_mode)) || entry.info.st_size < 0)
+        const bool is_directory = entry.info.kind == native::Kind::directory;
+        if ((!is_directory && entry.info.kind != native::Kind::regular))
             return std::unexpected(Error{ErrorCode::invalid_path});
         if (!names.emplace(folded(path), is_directory).second)
             return std::unexpected(Error{ErrorCode::destination_conflict});
-        Fd child(::openat(directory, entry.name.c_str(),
-                          O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK |
-                              (is_directory ? O_DIRECTORY : 0)));
-        if (child.get() < 0)
-            return std::unexpected(storage_error());
-        auto unchanged = stable(child.get(), entry.info);
+        auto child =
+            native::open_at(directory, entry.name, native::Access::read,
+                            is_directory ? native::Kind::directory : native::Kind::regular);
+        if (!child)
+            return std::unexpected(child.error());
+        auto unchanged = stable(child->get(), entry.info);
         if (!unchanged)
             return unchanged;
-        const auto size = is_directory ? 0 : static_cast<std::uint64_t>(entry.info.st_size);
+        const auto size = is_directory ? 0 : static_cast<std::uint64_t>(entry.info.size);
         if (size > maximum_file_size - writer.bytes)
             return std::unexpected(Error{ErrorCode::invalid_manifest});
         auto written = writer.write(header(is_directory ? 1 : 2, path.size(), size));
@@ -235,7 +109,7 @@ Result<void> pack(int directory, const std::string& prefix, Writer& writer,
         if (!written)
             return written;
         if (is_directory) {
-            auto result = pack(child.get(), path, writer, buffer, names, count, stop);
+            auto result = pack(child->get(), path, writer, buffer, names, count, stop);
             if (!result)
                 return result;
         } else {
@@ -244,35 +118,33 @@ Result<void> pack(int directory, const std::string& prefix, Writer& writer,
                     return std::unexpected(Error{ErrorCode::cancelled});
                 const auto amount =
                     static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), size - offset));
-                const auto read =
-                    ::pread(child.get(), buffer.data(), amount, static_cast<off_t>(offset));
-                if (read < 0 && errno == EINTR)
-                    continue;
-                if (read <= 0)
-                    return std::unexpected(read < 0 ? storage_error()
-                                                    : Error{ErrorCode::source_changed});
-                written = writer.write(std::span(buffer).first(static_cast<std::size_t>(read)));
+                auto read = native::read_at(child->get(), std::span(buffer).first(amount), offset,
+                                            ErrorCode::source_changed, stop);
+                if (!read)
+                    return read;
+                written = writer.write(std::span(buffer).first(amount));
                 if (!written)
                     return written;
-                offset += static_cast<std::uint64_t>(read);
+                offset += amount;
             }
-            unchanged = stable(child.get(), entry.info);
+            unchanged = stable(child->get(), entry.info);
             if (!unchanged)
                 return unchanged;
         }
     }
-    return stable(directory, before);
+    return stable(directory, *before);
 }
 struct Snapshot {
     std::filesystem::path directory;
     ~Snapshot() {
         if (!directory.empty()) {
-            ::unlink((directory / "payload").c_str());
-            ::rmdir(directory.c_str());
+            std::error_code ignored;
+            std::filesystem::remove(directory / "payload", ignored);
+            std::filesystem::remove(directory, ignored);
         }
     }
 };
-Result<void> collision(int root, const std::string& name) {
+Result<void> collision(Handle root, const std::string& name) {
     std::size_t count = 0;
     // Destination enumeration is bounded too: avoid arbitrary work on a huge root.
     auto entries = list(root, count, {});
@@ -292,10 +164,11 @@ std::string state_name(const TransferId& id) {
     }
     return name + ".folder-state";
 }
-Result<Fd> beneath(int root, const std::string& path) {
-    Fd current(::dup(root));
-    if (current.get() < 0)
-        return std::unexpected(storage_error());
+Result<File> beneath(Handle root, const std::string& path) {
+    auto copy = native::duplicate(root);
+    if (!copy)
+        return std::unexpected(copy.error());
+    File current = std::move(*copy);
     std::size_t begin = 0;
     while (begin < path.size()) {
         const auto end = path.find('/', begin);
@@ -311,16 +184,15 @@ Result<Fd> beneath(int root, const std::string& path) {
     return current;
 }
 // Only called beneath our exclusively locked, mode-0700 private namespace.
-Result<void> remove_stage(int parent, const std::string& name, unsigned depth = 0) {
+Result<void> remove_stage(Handle parent, const std::string& name, unsigned depth = 0) {
     if (depth > maximum_folder_depth)
         return std::unexpected(Error{ErrorCode::invalid_path});
-    struct stat info {};
-    if (::fstatat(parent, name.c_str(), &info, AT_SYMLINK_NOFOLLOW) != 0) {
-        if (errno == ENOENT)
-            return {};
-        return std::unexpected(storage_error());
-    }
-    if (S_ISDIR(info.st_mode)) {
+    auto info = native::child_metadata(parent, name);
+    if (!info)
+        return std::unexpected(info.error());
+    if (!info->has_value())
+        return {};
+    if ((**info).kind == native::Kind::directory) {
         auto dir = directory_at(parent, name);
         if (!dir)
             return std::unexpected(dir.error());
@@ -334,37 +206,28 @@ Result<void> remove_stage(int parent, const std::string& name, unsigned depth = 
                 return removed;
         }
     }
-    if (::unlinkat(parent, name.c_str(), S_ISDIR(info.st_mode) ? AT_REMOVEDIR : 0) != 0)
-        return std::unexpected(storage_error());
-    return {};
+    return native::remove(parent, name);
 }
 struct Reader {
-    int fd;
+    Handle fd;
     std::uint64_t remaining;
     security::Sha256 digest;
+    std::uint64_t offset = 0;
     Result<void> read(std::span<std::uint8_t> output, std::stop_token stop) {
         if (output.size() > remaining)
             return std::unexpected(Error{ErrorCode::malformed_frame});
-        while (!output.empty()) {
-            if (stop.stop_requested())
-                return std::unexpected(Error{ErrorCode::cancelled});
-            const auto count = ::read(fd, output.data(), output.size());
-            if (count < 0 && errno == EINTR)
-                continue;
-            if (count <= 0)
-                return std::unexpected(count < 0 ? storage_error()
-                                                 : Error{ErrorCode::malformed_frame});
-            auto bytes = output.first(static_cast<std::size_t>(count));
-            auto updated = digest.update(bytes);
-            if (!updated)
-                return updated;
-            remaining -= bytes.size();
-            output = output.subspan(bytes.size());
-        }
+        auto read = native::read_at(fd, output, offset, ErrorCode::malformed_frame, stop);
+        if (!read)
+            return read;
+        auto updated = digest.update(output);
+        if (!updated)
+            return updated;
+        remaining -= output.size();
+        offset += output.size();
         return {};
     }
 };
-Result<void> extract(Reader& reader, int stage, std::stop_token stop) {
+Result<void> extract(Reader& reader, Handle stage, std::stop_token stop) {
     std::array<std::uint8_t, 8> magic{};
     auto read = reader.read(magic, stop);
     constexpr std::array<std::uint8_t, 8> expected{'B', 'R', 'F', 'O', 'L', 'D', '0', '1'};
@@ -413,17 +276,17 @@ Result<void> extract(Reader& reader, int stage, std::stop_token stop) {
             return std::unexpected(parent.error());
         const auto leaf = slash == std::string::npos ? path : path.substr(slash + 1);
         if (bytes[0] == 1) {
-            if (::mkdirat(parent->get(), leaf.c_str(), 0700) != 0)
-                return std::unexpected(storage_error());
+            auto created = native::open_at(parent->get(), leaf, native::Access::create_directory);
+            if (!created)
+                return std::unexpected(created.error());
             directories.push_back(path);
         } else {
             if (length > reader.remaining)
                 return std::unexpected(Error{ErrorCode::malformed_frame});
-            Fd file(::openat(parent->get(), leaf.c_str(),
-                             O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-            if (file.get() < 0)
-                return std::unexpected(storage_error());
-            Writer writer{file.get()};
+            auto file = native::open_at(parent->get(), leaf, native::Access::create_file);
+            if (!file)
+                return std::unexpected(file.error());
+            Writer writer{file->get()};
             for (std::uint64_t left = length; left > 0;) {
                 auto bytes_to_read = std::span(buffer).first(
                     static_cast<std::size_t>(std::min<std::uint64_t>(buffer.size(), left)));
@@ -435,7 +298,7 @@ Result<void> extract(Reader& reader, int stage, std::stop_token stop) {
                     return written;
                 left -= bytes_to_read.size();
             }
-            auto synced = sync_fd(file.get());
+            auto synced = sync(file->get());
             if (!synced)
                 return synced;
         }
@@ -446,26 +309,11 @@ Result<void> extract(Reader& reader, int stage, std::stop_token stop) {
         auto dir = beneath(stage, *i);
         if (!dir)
             return std::unexpected(dir.error());
-        auto synced = sync_fd(dir->get());
+        auto synced = sync(dir->get());
         if (!synced)
             return synced;
     }
-    return sync_fd(stage);
-}
-Result<void> publish_directory(int state, int root, const std::string& name) {
-#ifdef __linux__
-    const auto result = ::syscall(SYS_renameat2, state, ".bridge-extract", root, name.c_str(),
-                                  1U /* RENAME_NOREPLACE */);
-#elif defined(__APPLE__)
-    const auto result = ::renameatx_np(state, ".bridge-extract", root, name.c_str(), RENAME_EXCL);
-#else
-    return std::unexpected(Error{ErrorCode::unsupported_platform});
-#endif
-#if defined(__linux__) || defined(__APPLE__)
-    if (result != 0)
-        return std::unexpected(storage_error());
-    return sync_fd(root);
-#endif
+    return sync(stage);
 }
 } // namespace
 struct SourcePayload::Impl {
@@ -490,10 +338,13 @@ Result<SourcePayload> SourcePayload::open(const std::filesystem::path& selected,
     const auto path = normalized(selected);
     if (path.empty() || path.native().find('\0') != std::string::npos)
         return std::unexpected(Error{ErrorCode::invalid_path});
-    struct stat info {};
-    if (::lstat(path.c_str(), &info) != 0)
-        return std::unexpected(storage_error());
-    if (S_ISREG(info.st_mode)) {
+    auto opened = native::open_path(path, native::Kind::other);
+    if (!opened)
+        return std::unexpected(opened.error());
+    auto info = native::metadata(opened->get());
+    if (!info)
+        return std::unexpected(info.error());
+    if (info->kind == native::Kind::regular) {
         auto file = SourceFile::open(path, id, stop);
         if (!file)
             return std::unexpected(file.error());
@@ -501,29 +352,26 @@ Result<SourcePayload> SourcePayload::open(const std::filesystem::path& selected,
         return SourcePayload(
             std::make_unique<Impl>(nullptr, std::move(*file), std::move(manifest)));
     }
-    if (!S_ISDIR(info.st_mode) || !safe_path(path.filename().string()))
+    if (info->kind != native::Kind::directory || !safe_path(native::filename(path)))
         return std::unexpected(Error{ErrorCode::invalid_path});
     auto root = open_root(path);
     if (!root)
         return std::unexpected(root.error());
-    auto unchanged = stable(root->get(), info);
+    auto unchanged = stable(root->get(), *info);
     if (!unchanged)
         return std::unexpected(unchanged.error());
-    std::error_code ec;
-    auto temporary = std::filesystem::temp_directory_path(ec);
-    if (ec)
-        return std::unexpected(Error{ErrorCode::io_failed, ec.value()});
-    auto pattern = (temporary / "bridge-folder-XXXXXX").string();
+    auto temporary = native::temporary_directory();
+    if (!temporary)
+        return std::unexpected(temporary.error());
     auto snapshot = std::make_unique<Snapshot>();
-    auto* created = ::mkdtemp(pattern.data());
-    if (!created)
-        return std::unexpected(storage_error());
-    snapshot->directory = created;
-    Fd output(::open((snapshot->directory / "payload").c_str(),
-                     O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0600));
-    if (output.get() < 0)
-        return std::unexpected(storage_error());
-    Writer writer{output.get()};
+    snapshot->directory = *temporary;
+    auto snapshot_root = open_root(snapshot->directory);
+    if (!snapshot_root)
+        return std::unexpected(snapshot_root.error());
+    auto output = native::open_at(snapshot_root->get(), "payload", native::Access::create_file);
+    if (!output)
+        return std::unexpected(output.error());
+    Writer writer{output->get()};
     constexpr std::array<std::uint8_t, 8> magic{'B', 'R', 'F', 'O', 'L', 'D', '0', '1'};
     auto written = writer.write(magic);
     if (!written)
@@ -537,20 +385,20 @@ Result<SourcePayload> SourcePayload::open(const std::filesystem::path& selected,
     written = writer.write(header(0, 0, 0));
     if (!written)
         return std::unexpected(written.error());
-    unchanged = stable(root->get(), info);
+    unchanged = stable(root->get(), *info);
     if (!unchanged)
         return std::unexpected(unchanged.error());
     auto file = SourceFile::open(snapshot->directory / "payload", id, stop);
     if (!file)
         return std::unexpected(file.error());
     auto manifest = file->manifest();
-    manifest.name = path.filename().string();
+    manifest.name = native::filename(path);
     manifest.kind = PayloadKind::folder;
     return SourcePayload(
         std::make_unique<Impl>(std::move(snapshot), std::move(*file), std::move(manifest)));
 }
 struct FolderDestination::Impl {
-    Fd root, state;
+    File root, state;
     std::filesystem::path payload;
     FileManifest manifest;
 };
@@ -567,24 +415,25 @@ Result<FolderDestination> FolderDestination::open(const std::filesystem::path& s
     auto root = open_root(selected);
     if (!root)
         return std::unexpected(root.error());
+    auto compatible = native::receive_root(root->get());
+    if (!compatible)
+        return std::unexpected(compatible.error());
     auto conflict = collision(root->get(), m.name);
     if (!conflict)
         return std::unexpected(conflict.error());
     const auto name = state_name(m.id);
-    if (!resume && ::mkdirat(root->get(), name.c_str(), 0700) != 0)
-        return std::unexpected(storage_error());
-    auto state = directory_at(root->get(), name);
+    auto state = native::open_at(root->get(), name,
+                                 resume ? native::Access::read : native::Access::create_directory,
+                                 native::Kind::directory);
     if (!state)
         return std::unexpected(state.error());
-    struct stat info {};
-    if (::fstat(state->get(), &info) != 0)
-        return std::unexpected(storage_error());
-    if (info.st_uid != ::geteuid() || (info.st_mode & 0777) != 0700)
-        return std::unexpected(Error{ErrorCode::invalid_checkpoint});
-    if (::flock(state->get(), LOCK_EX | LOCK_NB) != 0)
-        return std::unexpected(errno == EWOULDBLOCK ? Error{ErrorCode::checkpoint_busy}
-                                                    : storage_error());
-    auto synced = sync_fd(root->get());
+    auto private_state = native::validate_private(state->get());
+    if (!private_state)
+        return std::unexpected(private_state.error());
+    auto locked = native::lock(*state);
+    if (!locked)
+        return std::unexpected(locked.error());
+    auto synced = sync(root->get());
     if (!synced)
         return std::unexpected(synced.error());
     auto impl = std::make_unique<Impl>();
@@ -600,28 +449,26 @@ Result<void> FolderDestination::publish(std::stop_token stop) {
     auto conflict = collision(impl_->root.get(), impl_->manifest.name);
     if (!conflict)
         return conflict;
-    Fd bundle(::openat(impl_->state.get(), impl_->manifest.name.c_str(),
-                       O_RDONLY | O_NOFOLLOW | O_CLOEXEC | O_NONBLOCK));
-    if (bundle.get() < 0)
-        return std::unexpected(storage_error());
-    struct stat info {};
-    if (::fstat(bundle.get(), &info) != 0)
-        return std::unexpected(storage_error());
-    if (!S_ISREG(info.st_mode) || info.st_nlink != 1 || info.st_size < 0 ||
-        static_cast<std::uint64_t>(info.st_size) != impl_->manifest.size)
+    auto bundle = native::open_at(impl_->state.get(), impl_->manifest.name, native::Access::read);
+    if (!bundle)
+        return std::unexpected(bundle.error());
+    auto info = native::metadata(bundle->get());
+    if (!info)
+        return std::unexpected(info.error());
+    if (info->kind != native::Kind::regular || info->links != 1 ||
+        info->size != impl_->manifest.size)
         return std::unexpected(Error{ErrorCode::invalid_checkpoint});
     auto removed = remove_stage(impl_->state.get(), ".bridge-extract");
     if (!removed)
         return removed;
-    if (::mkdirat(impl_->state.get(), ".bridge-extract", 0700) != 0)
-        return std::unexpected(storage_error());
-    auto stage = directory_at(impl_->state.get(), ".bridge-extract");
+    auto stage =
+        native::open_at(impl_->state.get(), ".bridge-extract", native::Access::create_directory);
     if (!stage)
         return std::unexpected(stage.error());
     auto digest = security::Sha256::create();
     if (!digest)
         return std::unexpected(digest.error());
-    Reader reader{bundle.get(), impl_->manifest.size, std::move(*digest)};
+    Reader reader{bundle->get(), impl_->manifest.size, std::move(*digest)};
     auto extracted = extract(reader, stage->get(), stop);
     if (!extracted)
         return extracted;
@@ -630,7 +477,7 @@ Result<void> FolderDestination::publish(std::stop_token stop) {
         return std::unexpected(hash.error());
     if (*hash != impl_->manifest.digest)
         return std::unexpected(Error{ErrorCode::checksum_mismatch});
-    auto unchanged = stable(bundle.get(), info);
+    auto unchanged = stable(bundle->get(), *info);
     if (!unchanged)
         return unchanged;
     if (stop.stop_requested())
@@ -638,9 +485,10 @@ Result<void> FolderDestination::publish(std::stop_token stop) {
     conflict = collision(impl_->root.get(), impl_->manifest.name);
     if (!conflict)
         return conflict;
-    auto published = publish_directory(impl_->state.get(), impl_->root.get(), impl_->manifest.name);
+    auto published = native::rename_directory(stage->get(), impl_->state.get(), impl_->root.get(),
+                                              impl_->manifest.name);
     if (!published)
         return published;
-    return sync_fd(impl_->state.get());
+    return sync(impl_->state.get());
 }
 } // namespace bridge::io

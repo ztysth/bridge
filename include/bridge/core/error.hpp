@@ -90,7 +90,8 @@ constexpr std::string_view error_message(ErrorCode code) {
     case ErrorCode::checkpoint_busy:
         return "Another receiver is using this checkpoint. Close it before resuming.";
     case ErrorCode::unsupported_platform:
-        return "Safe checkpoint IO is not supported on this platform yet.";
+        return "Safe file IO is unavailable for this platform or filesystem. On Windows, choose a "
+               "local NTFS destination.";
     case ErrorCode::hash_failed:
         return "Content hashing failed. Check the cryptographic backend.";
     case ErrorCode::source_changed:

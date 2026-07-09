@@ -6,10 +6,8 @@
 #include <string_view>
 #include <vector>
 using namespace bridge;
-int main(int argc, char** argv) {
-    if (argc != 3)
-        return 2;
-    const std::string_view action(argv[1]);
+namespace {
+int run(std::string_view action, const std::filesystem::path& root) {
     io::CheckpointFault point = io::CheckpointFault::none;
     if (action == "crash-data")
         point = io::CheckpointFault::after_data_sync;
@@ -32,8 +30,8 @@ int main(int argc, char** argv) {
     if (!full || !first_hash || !last_hash)
         return 3;
     FileManifest manifest{{1}, "received.bin", chunk_size + last.size(), *full};
-    auto file = action == "resume" ? io::PartialFile::resume(argv[2], manifest)
-                                   : io::PartialFile::create(argv[2], manifest, {point, 1});
+    auto file = action == "resume" ? io::PartialFile::resume(root, manifest)
+                                   : io::PartialFile::create(root, manifest, {point, 1});
     if (!file)
         return 4;
     if (action != "resume") {
@@ -63,3 +61,24 @@ int main(int argc, char** argv) {
     }
     return file->committed() ? 0 : 6;
 }
+
+} // namespace
+#ifdef _WIN32
+int wmain(int argc, wchar_t** argv) {
+    if (argc != 3)
+        return 2;
+    std::string action;
+    for (const auto ch : std::wstring_view(argv[1])) {
+        if (ch > 127)
+            return 2;
+        action.push_back(static_cast<char>(ch));
+    }
+    return run(action, std::filesystem::path(argv[2]));
+}
+#else
+int main(int argc, char** argv) {
+    if (argc != 3)
+        return 2;
+    return run(argv[1], std::filesystem::path(argv[2]));
+}
+#endif

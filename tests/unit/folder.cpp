@@ -7,6 +7,7 @@
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
+#include "../windows_junction.hpp"
 using namespace bridge;
 namespace {
 struct Fixture {
@@ -139,7 +140,7 @@ TEST_CASE("folder source rejects symlinks special entries and case collisions") 
         REQUIRE_FALSE(io::SourcePayload::open(f.root / "source", {1}));
     }
     Fixture f;
-    std::filesystem::create_directory_symlink(f.root / "source", f.root / "alias");
+    bridge::test::directory_link(f.root / "source", f.root / "alias");
     REQUIRE_FALSE(io::SourcePayload::open(f.root / "alias" / "", {1}));
     auto deep = f.root / "source";
     for (std::size_t i = 0; i <= io::maximum_folder_depth; ++i) {
@@ -147,6 +148,13 @@ TEST_CASE("folder source rejects symlinks special entries and case collisions") 
         std::filesystem::create_directory(deep);
     }
     REQUIRE_FALSE(io::SourcePayload::open(f.root / "source", {1}));
+#else
+    Fixture f;
+    bridge::test::directory_link(f.root / "dest", f.root / "source" / "junction");
+    REQUIRE_FALSE(io::SourcePayload::open(f.root / "source", {1}));
+    bridge::test::directory_link(f.root / "source", f.root / "alias");
+    REQUIRE_FALSE(io::SourcePayload::open(f.root / "alias" / "", {1}));
+
 #endif
 }
 TEST_CASE("hostile folder bundles never publish final output") {
@@ -259,8 +267,8 @@ TEST_CASE("complete folder bundle restarts extraction without trusting stale sta
         // private staging name. Cleanup must unlink the link, not its target.
         std::filesystem::create_directory(f.root / "outside");
         write(f.root / "outside" / "keep", "keep");
-        std::filesystem::create_directory_symlink(f.root / "outside",
-                                                  folder->payload_root() / ".bridge-extract");
+        bridge::test::directory_link(f.root / "outside",
+                                     folder->payload_root() / ".bridge-extract");
 #endif
     }
     auto folder = io::FolderDestination::open(f.root / "dest", source->manifest(), true);
