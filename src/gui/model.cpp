@@ -2,9 +2,18 @@
 #include <QFileInfo>
 #include <QNetworkInterface>
 #include <iostream>
+namespace {
+std::filesystem::path native_path(const QString& text) {
+#ifdef _WIN32
+    return std::filesystem::path(text.toStdWString());
+#else
+    return std::filesystem::path(text.toUtf8().toStdString());
+#endif
+}
+} // namespace
 SessionModel::SessionModel(QObject* parent) : QObject(parent), logger_(std::cerr) {
     if (!transfer_supported())
-        status_ = QStringLiteral("File transfer is not available on Windows yet.");
+        status_ = QStringLiteral("File transfer is not available on this platform.");
 }
 QStringList SessionModel::local_addresses() const {
     QStringList result{QStringLiteral("127.0.0.1")};
@@ -64,7 +73,7 @@ void SessionModel::receive(const QString& address, const QString& port, const QS
     std::uint16_t number = 0;
     if (!create(bridge::Role::receiver, address, port, number))
         return;
-    auto result = transfer_->receive(QHostAddress(address), number, destination.toStdString(),
+    auto result = transfer_->receive(QHostAddress(address), number, native_path(destination),
                                      resume ? bridge::app::ReceiveMode::resume
                                             : bridge::app::ReceiveMode::create);
     if (!result) {
@@ -85,7 +94,7 @@ void SessionModel::connectPeer(const QString& address, const QString& port, cons
     std::uint16_t number = 0;
     if (!create(bridge::Role::initiator, address, port, number))
         return;
-    auto result = transfer_->send_file(QHostAddress(address), number, source.toStdString(),
+    auto result = transfer_->send_file(QHostAddress(address), number, native_path(source),
                                        resume ? saved_manifest_ : std::nullopt);
     if (!result) {
         show_error(result.error());

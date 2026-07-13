@@ -1,6 +1,8 @@
 #include "model.hpp"
 #include <QCoreApplication>
+#include <QDir>
 #include <QEventLoop>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <catch2/catch_test_macros.hpp>
@@ -15,13 +17,17 @@ TEST_CASE("desktop model Pause Continue commands resume actual bytes and preserv
         REQUIRE_FALSE(receiver.can_pause());
         return;
     }
-    QTemporaryDir src, root;
+    QTemporaryDir src(QDir::tempPath() + QStringLiteral("/bridge-src-\u6d4b\u8bd5-XXXXXX"));
+    QTemporaryDir root(QDir::tempPath() + QStringLiteral("/bridge-dst-\u6d4b\u8bd5-XXXXXX"));
+    REQUIRE(src.isValid());
+    REQUIRE(root.isValid());
     const auto path = src.path() + "/ui.bin";
     {
-        std::ofstream file(path.toStdString(), std::ios::binary);
-        std::string block(bridge::chunk_size, 'z');
+        QFile file(path);
+        REQUIRE(file.open(QIODevice::WriteOnly));
+        const QByteArray block(bridge::chunk_size, 'z');
         for (int i = 0; i < 4; ++i)
-            file.write(block.data(), static_cast<std::streamsize>(block.size()));
+            REQUIRE(file.write(block) == block.size());
     }
     QEventLoop loop;
     QTimer guard, poll;
@@ -81,8 +87,8 @@ TEST_CASE("desktop model Pause Continue commands resume actual bytes and preserv
     REQUIRE(sender.progress() == 1);
     REQUIRE(receiver.progress() == 1);
     REQUIRE(sender.status().contains("complete"));
-    REQUIRE(std::filesystem::file_size(std::filesystem::path(root.path().toStdString()) /
-                                       "ui.bin") == 4 * bridge::chunk_size);
+    QFile received(root.path() + "/ui.bin");
+    REQUIRE(received.size() == 4 * bridge::chunk_size);
 }
 TEST_CASE("desktop accepts one local folder drop and transmits its tree after consent") {
     int argc = 1;
@@ -90,19 +96,23 @@ TEST_CASE("desktop accepts one local folder drop and transmits its tree after co
     char* argv[2]{name, nullptr};
     QCoreApplication application(argc, argv);
     SessionModel sender, receiver;
-    QTemporaryDir src, root;
-    auto folder = std::filesystem::path(src.path().toStdString()) / "DropMe";
-    std::filesystem::create_directories(folder / "nested" / "empty");
+    QTemporaryDir src(QDir::tempPath() + QStringLiteral("/bridge-src-\u6d4b\u8bd5-XXXXXX"));
+    QTemporaryDir root(QDir::tempPath() + QStringLiteral("/bridge-dst-\u6d4b\u8bd5-XXXXXX"));
+    REQUIRE(src.isValid());
+    REQUIRE(root.isValid());
+    const auto folder = src.path() + "/DropMe";
+    REQUIRE(QDir().mkpath(folder + "/nested/empty"));
     {
-        std::ofstream file(folder / "nested" / "hello.txt");
-        file << "hello";
+        QFile file(folder + "/nested/hello.txt");
+        REQUIRE(file.open(QIODevice::WriteOnly));
+        REQUIRE(file.write("hello", 5) == 5);
     }
     REQUIRE_FALSE(sender.dropUrls({}));
     REQUIRE_FALSE(sender.dropUrls({QUrl("https://example.com/private")}));
     REQUIRE_FALSE(sender.dropUrls({QUrl("file://remote/share")}));
     REQUIRE_FALSE(sender.dropUrls({QUrl("file://localhost/tmp/share")}));
     REQUIRE_FALSE(sender.dropUrls({QUrl("file:///tmp/file?query")}));
-    const auto url = QUrl::fromLocalFile(QString::fromStdString(folder.string()));
+    const auto url = QUrl::fromLocalFile(folder);
     REQUIRE_FALSE(sender.dropUrls({url, url}));
     REQUIRE(sender.dropUrls({url}));
     REQUIRE(sender.selected_name() == "DropMe");
@@ -143,6 +153,8 @@ TEST_CASE("desktop accepts one local folder drop and transmits its tree after co
     REQUIRE(consent);
     REQUIRE(sender.complete());
     REQUIRE(receiver.complete());
-    REQUIRE(std::filesystem::is_directory(std::filesystem::path(root.path().toStdString()) /
-                                          "DropMe" / "nested" / "empty"));
+    REQUIRE(QDir(root.path() + "/DropMe/nested/empty").exists());
+    QFile received(root.path() + "/DropMe/nested/hello.txt");
+    REQUIRE(received.open(QIODevice::ReadOnly));
+    REQUIRE(received.readAll() == "hello");
 }

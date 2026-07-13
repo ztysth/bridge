@@ -5,6 +5,7 @@ import QtQuick.Dialogs
 
 ApplicationWindow {
     id: window
+    property bool smokeTest: false
     width: 960
     height: 780
     minimumWidth: 760
@@ -59,21 +60,24 @@ ApplicationWindow {
 
     FileDialog {
         id: filePicker
+        objectName: "filePicker"
         title: "Choose file"
         fileMode: FileDialog.OpenFile
-        options: FileDialog.DontResolveSymlinks
+        options: FileDialog.DontResolveSymlinks | (window.smokeTest ? FileDialog.DontUseNativeDialog : 0)
         onAccepted: sessionModel.selectSource(selectedFile)
     }
     FolderDialog {
         id: folderPicker
+        objectName: "folderPicker"
         title: "Choose folder"
-        options: FolderDialog.DontResolveSymlinks
+        options: FolderDialog.DontResolveSymlinks | (window.smokeTest ? FolderDialog.DontUseNativeDialog : 0)
         onAccepted: sessionModel.selectSource(selectedFolder)
     }
     FolderDialog {
         id: destinationPicker
+        objectName: "destinationPicker"
         title: "Choose destination"
-        options: FolderDialog.DontResolveSymlinks
+        options: FolderDialog.DontResolveSymlinks | (window.smokeTest ? FolderDialog.DontUseNativeDialog : 0)
         onAccepted: sessionModel.selectDestination(selectedFolder)
     }
 
@@ -107,7 +111,7 @@ ApplicationWindow {
                         id: dropZone
                         objectName: "sourceDropArea"
                         anchors.fill: parent
-                        enabled: !sessionModel.busy && sessionModel.transferSupported
+                        enabled: !sessionModel.busy
                         onEntered: function(drag) { drag.accepted = drag.hasUrls && !sessionModel.busy }
                         onDropped: function(drop) {
                             if (drop.hasUrls && sessionModel.dropUrls(drop.urls)) drop.acceptProposedAction()
@@ -136,8 +140,8 @@ ApplicationWindow {
                         RowLayout {
                             Layout.alignment: Qt.AlignHCenter
                             spacing: 10
-                            Action { objectName: "chooseFolderButton"; text: "Choose folder"; enabled: !sessionModel.busy && sessionModel.transferSupported; onClicked: folderPicker.open() }
-                            Action { text: "Choose file"; enabled: !sessionModel.busy && sessionModel.transferSupported; onClicked: filePicker.open() }
+                            Action { objectName: "chooseFolderButton"; text: "Choose folder"; enabled: !sessionModel.busy; onClicked: folderPicker.open() }
+                            Action { objectName: "chooseFileButton"; text: "Choose file"; enabled: !sessionModel.busy; onClicked: filePicker.open() }
                         }
                     }
                 }
@@ -171,7 +175,7 @@ ApplicationWindow {
                         RowLayout {
                             Layout.fillWidth: true
                             Copy { text: sessionModel.destination.length ? sessionModel.destination : "No folder selected"; Layout.fillWidth: true; elide: Text.ElideMiddle; wrapMode: Text.NoWrap }
-                            Action { text: "Choose folder"; enabled: !sessionModel.busy && sessionModel.transferSupported; onClicked: destinationPicker.open() }
+                            Action { objectName: "chooseDestinationButton"; text: "Choose folder"; enabled: !sessionModel.busy; onClicked: destinationPicker.open() }
                         }
                         Copy { text: "Listen address"; color: "#303849"; font.weight: Font.DemiBold }
                         RowLayout {
