@@ -1,7 +1,12 @@
 function(bridge_options target)
   if(MSVC)
     if(BRIDGE_SANITIZER)
-      message(FATAL_ERROR "These sanitizer presets require GCC/Clang. Native MSVC sanitizer validation is not yet configured.")
+      if(NOT BRIDGE_SANITIZER STREQUAL "address" OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8
+          OR CMAKE_SYSTEM_PROCESSOR MATCHES "[Aa][Rr][Mm]64|aarch64")
+        message(FATAL_ERROR "Native MSVC sanitizers require x64 AddressSanitizer; ARM64/UBSan/TSan use supported native toolchains separately.")
+      endif()
+      target_compile_options(${target} PRIVATE /fsanitize=address /Zi)
+      target_link_options(${target} PUBLIC /INCREMENTAL:NO)
     endif()
     target_compile_options(${target} PRIVATE /W4 /permissive-)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")

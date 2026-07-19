@@ -121,6 +121,16 @@ jobs:
             QML_IMPORT_PATH="$bridge_sdk/Qt6/qml" \
             PATH="$bridge_sdk_bin:$PATH" \
             python .github/package.py test --build "$BRIDGE_CI_BUILD"
+      - name: Check Windows x64 filesystem ownership with AddressSanitizer
+        if: inputs.platform == 'windows' && inputs.arch == 'x86_64'
+        run: |
+          bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
+          cmake --preset release-system -B "$RUNNER_TEMP/bridge-asan" \
+            -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_PREFIX_PATH="$bridge_sdk" \
+            -DBRIDGE_SANITIZER=address -DBRIDGE_BUILD_SESSION=OFF -DBRIDGE_BUILD_GUI=OFF
+          cmake --build "$RUNNER_TEMP/bridge-asan" --parallel 2
+          env PATH="$(cygpath -u "$bridge_sdk/bin"):$PATH" \
+            ctest --test-dir "$RUNNER_TEMP/bridge-asan" -R '^(unit|io_integration|process_checkpoints)$' --output-on-failure
       - name: Deploy and validate the native package
         if: inputs.platform != 'linux'
         run: |

@@ -71,7 +71,8 @@ jobs:
           else
             gh release create "$BRIDGE_RELEASE_TAG" --verify-tag --draft --prerelease \
               --title "bridge $BRIDGE_RELEASE_TAG" \
-              --notes 'File and folder transfers over a local network. Windows builds currently provide the UI; Linux RISC-V builds are experimental.'
+              --notes 'File and folder transfers over a local network. Windows receive destinations require local NTFS storage. Linux RISC-V builds are experimental.'
           fi
           gh release upload "$BRIDGE_RELEASE_TAG" dist/* --clobber
-          gh release edit "$BRIDGE_RELEASE_TAG" --draft=false
+          gh release edit "$BRIDGE_RELEASE_TAG" --draft=false --prerelease \
+            --notes 'File and folder transfers over Wi-Fi or Ethernet, with Pause/Continue and verified checkpoint recovery. Windows: extract the ZIP and run bridge.cmd; receive destinations require local NTFS. Install the bundled Microsoft C++ runtime if needed. macOS: requires macOS 14+, ad hoc signed and not notarized. Linux: requires Ubuntu 24.04; RISC-V is experimental. Checksums are listed in SHA256SUMS.'

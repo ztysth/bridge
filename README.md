@@ -16,8 +16,7 @@ transfers. Files and folders can be dragged into the window.
    the sender open and select **Resume interrupted transfer** on both sides.
 
 Existing destination files are preserved. Symlinks and unsafe paths are rejected.
-Names currently use portable ASCII characters. Windows file transfer is still
-under development.
+Names currently use portable ASCII characters. Windows receive destinations must use local NTFS storage.
 
 ## Download
 

@@ -4,6 +4,7 @@ if(BRIDGE_FORMAT)
   file(GLOB_RECURSE bridge_format_sources CONFIGURE_DEPENDS
     "${PROJECT_SOURCE_DIR}/src/*.cpp" "${PROJECT_SOURCE_DIR}/src/*.hpp"
     "${PROJECT_SOURCE_DIR}/include/*.hpp" "${PROJECT_SOURCE_DIR}/tests/*.cpp"
+    "${PROJECT_SOURCE_DIR}/tests/*.hpp"
     "${PROJECT_SOURCE_DIR}/tools/*.cpp" "${PROJECT_SOURCE_DIR}/benchmarks/*.cpp")
   add_custom_target(format-check
     COMMAND ${BRIDGE_FORMAT} --dry-run --Werror ${bridge_format_sources}
