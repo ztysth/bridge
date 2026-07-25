@@ -40,8 +40,12 @@ jobs:
   riscv:
     needs: version
     uses: ./.github/workflows/riscv.yml
+  diagnostics:
+    uses: ./.github/workflows/ci.yml
+    with:
+      diagnostics_only: true
   publish:
-    needs: [native, riscv]
+    needs: [native, riscv, diagnostics]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
