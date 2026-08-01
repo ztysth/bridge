@@ -33,6 +33,7 @@ int main(int argc, char** argv) {
     if (application.arguments().contains(QStringLiteral("--smoke-test"))) {
         if (QQuickStyle::name() != QStringLiteral("Basic"))
             return 1;
+        QGuiApplication::setQuitOnLastWindowClosed(false);
         window->setProperty("smokeTest", true);
         // Borrowed QML objects; smoke verifies that the commands are present and
         // disabled before a transfer, in addition to loading the QML module.
@@ -112,9 +113,20 @@ int main(int argc, char** argv) {
                 }
                 QCoreApplication::processEvents();
             }
-            window->close();
-            window->releaseResources();
-            QTimer::singleShot(50, &application, &QGuiApplication::quit);
+            // Fallback dialogs own additional Qt Quick windows/scene graphs.
+            // Release each before leaving the event loop, including hidden ones.
+            for (auto* child : QGuiApplication::allWindows()) {
+                if (auto* quick = qobject_cast<QQuickWindow*>(child)) {
+                    quick->setPersistentSceneGraph(false);
+                    quick->setPersistentGraphics(false);
+                    quick->close();
+                    quick->releaseResources();
+                }
+            }
+            // Destroy the QML tree while deferred dialog/render cleanup can
+            // still run on the GUI event loop. Engine observes root destruction.
+            window->deleteLater();
+            QTimer::singleShot(100, &application, &QGuiApplication::quit);
         });
     }
     return application.exec();

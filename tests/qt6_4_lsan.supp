@@ -1,0 +1,6 @@
+# Qt 6.4.2 software-rendered fallback dialogs retain icon images/textures on exit.
+# Reproduced with a standalone Qt-only FileDialog app (no bridge libraries).
+# Apply only to gui_smoke on Linux Qt 6.4.2 ASan builds; headless tests have no
+# suppression. Remove/recheck when the Ubuntu runtime SDK changes.
+leak:QQuickPixmap::setImage
+leak:QSGRenderContext::textureForFactory

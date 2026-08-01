@@ -176,6 +176,13 @@ if(BUILD_TESTING)
       endif()
       set_tests_properties(gui_smoke PROPERTIES LABELS gui TIMEOUT 15
         ENVIRONMENT "QT_QPA_PLATFORM=${bridge_gui_test_platform};QT_QUICK_BACKEND=software")
+      if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND BRIDGE_SANITIZER STREQUAL "address"
+          AND Qt6_VERSION VERSION_EQUAL "6.4.2")
+        # Standalone Qt-only reproduction confirms these two texture-cache leaks.
+        # Keep leak detection enabled and never suppress the headless IO tests.
+        set_property(TEST gui_smoke APPEND PROPERTY ENVIRONMENT
+          "LSAN_OPTIONS=suppressions=${PROJECT_SOURCE_DIR}/tests/qt6_4_lsan.supp:print_suppressions=1")
+      endif()
     endif()
   endif()
 endif()
