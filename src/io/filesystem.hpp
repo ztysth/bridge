@@ -45,7 +45,7 @@ struct Entry {
     Metadata info;
 };
 std::filesystem::path normalized(std::filesystem::path);
-std::string filename(const std::filesystem::path&);
+Result<std::string> filename(const std::filesystem::path&);
 bool same_file(const Metadata&, const Metadata&);
 bool same_snapshot(const Metadata&, const Metadata&);
 Result<File> open_path(const std::filesystem::path&, Kind);

@@ -352,7 +352,10 @@ Result<SourcePayload> SourcePayload::open(const std::filesystem::path& selected,
         return SourcePayload(
             std::make_unique<Impl>(nullptr, std::move(*file), std::move(manifest)));
     }
-    if (info->kind != native::Kind::directory || !safe_path(native::filename(path)))
+    auto name = native::filename(path);
+    if (!name)
+        return std::unexpected(name.error());
+    if (info->kind != native::Kind::directory || !safe_path(*name))
         return std::unexpected(Error{ErrorCode::invalid_path});
     auto root = open_root(path);
     if (!root)
@@ -392,7 +395,7 @@ Result<SourcePayload> SourcePayload::open(const std::filesystem::path& selected,
     if (!file)
         return std::unexpected(file.error());
     auto manifest = file->manifest();
-    manifest.name = native::filename(path);
+    manifest.name = *name;
     manifest.kind = PayloadKind::folder;
     return SourcePayload(
         std::make_unique<Impl>(std::move(snapshot), std::move(*file), std::move(manifest)));

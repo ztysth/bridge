@@ -9,6 +9,7 @@
 #ifdef __linux__
 #include <sys/syscall.h>
 #endif
+#include <type_traits>
 #include <unistd.h>
 #include <utility>
 namespace bridge::io::native {
@@ -35,7 +36,7 @@ Metadata convert(const struct stat& value) {
     m.kind = S_ISREG(value.st_mode) && value.st_size >= 0 ? Kind::regular
              : S_ISDIR(value.st_mode)                     ? Kind::directory
                                                           : Kind::other;
-    m.device = value.st_dev;
+    m.device = static_cast<std::uint64_t>(static_cast<std::make_unsigned_t<dev_t>>(value.st_dev));
     m.identity = value.st_ino;
     m.size = value.st_size >= 0 ? static_cast<std::uint64_t>(value.st_size) : 0;
     m.links = value.st_nlink;
@@ -74,6 +75,7 @@ File& File::operator=(File&& other) noexcept {
     lock_file.swap(temporary.lock_file);
     return *this;
 }
+Result<std::string> filename(const std::filesystem::path& path) { return path.filename().string(); }
 Result<void> receive_root(Handle) { return {}; }
 Result<File> open_path(const std::filesystem::path& path, Kind kind) {
     if (path.empty() || path.native().find('\0') != std::string::npos)

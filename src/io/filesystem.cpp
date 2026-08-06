@@ -5,10 +5,6 @@ std::filesystem::path normalized(std::filesystem::path path) {
         path = path.parent_path();
     return path;
 }
-std::string filename(const std::filesystem::path& path) {
-    const auto bytes = path.filename().u8string();
-    return {bytes.begin(), bytes.end()};
-}
 bool same_file(const Metadata& a, const Metadata& b) {
     return a.device == b.device && a.identity == b.identity;
 }

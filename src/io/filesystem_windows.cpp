@@ -188,6 +188,9 @@ File& File::operator=(File&& other) noexcept {
     lock_file.swap(temporary.lock_file);
     return *this;
 }
+Result<std::string> filename(const std::filesystem::path& path) {
+    return utf8(path.filename().native());
+}
 Result<void> receive_root(Handle root) {
     std::array<wchar_t, 32768> path{};
     const auto size = GetFinalPathNameByHandleW(root, path.data(), static_cast<DWORD>(path.size()),
@@ -499,6 +502,9 @@ Result<std::filesystem::path> temporary_directory() {
     auto root = open_root(temporary);
     if (!root)
         return std::unexpected(root.error());
+    auto private_storage = receive_root(root->get());
+    if (!private_storage)
+        return std::unexpected(private_storage.error());
     for (unsigned attempt = 0; attempt < 32; ++attempt) {
         LUID id{};
         if (!AllocateLocallyUniqueId(&id))

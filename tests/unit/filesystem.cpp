@@ -90,3 +90,12 @@ TEST_CASE("Windows source and folder staging reject directory reparse points") {
     REQUIRE(std::filesystem::exists(outside.root));
 }
 #endif
+
+#ifdef _WIN32
+TEST_CASE("Windows malformed UTF-16 filenames return typed errors") {
+    std::wstring invalid_name(1, static_cast<wchar_t>(0xd800));
+    auto name = io::native::filename(std::filesystem::path(invalid_name));
+    REQUIRE_FALSE(name);
+    REQUIRE(name.error().code == ErrorCode::invalid_path);
+}
+#endif

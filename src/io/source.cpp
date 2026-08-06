@@ -27,7 +27,10 @@ Result<SourceFile> SourceFile::open(const std::filesystem::path& path, TransferI
                                     std::stop_token stop) {
     if (stop.stop_requested())
         return std::unexpected(Error{ErrorCode::cancelled});
-    const auto name = native::filename(path);
+    auto leaf = native::filename(path);
+    if (!leaf)
+        return std::unexpected(leaf.error());
+    const auto& name = *leaf;
     if (path.native().find('\0') != std::string::npos || name.find('/') != std::string::npos ||
         !validate_relative_path(name) || name.starts_with(".bridge-"))
         return std::unexpected(Error{ErrorCode::invalid_path});
