@@ -99,3 +99,24 @@ TEST_CASE("Windows malformed UTF-16 filenames return typed errors") {
     REQUIRE(name.error().code == ErrorCode::invalid_path);
 }
 #endif
+TEST_CASE("native positional IO preserves offsets above four GiB with sparse storage") {
+    Fixture fixture;
+    auto root = io::native::open_root(fixture.root);
+    REQUIRE(root);
+    auto file = io::native::open_at(root->get(), "large.bin", io::native::Access::create_file);
+    REQUIRE(file);
+#ifdef _WIN32
+    DWORD returned = 0;
+    REQUIRE(
+        DeviceIoControl(file->get(), FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr));
+#endif
+    constexpr std::uint64_t offset = (5ULL << 30U) + 17;
+    const std::array<std::uint8_t, 3> bytes{7, 19, 31};
+    REQUIRE(io::native::write_at(file->get(), bytes, offset));
+    REQUIRE(io::native::metadata(file->get())->size == offset + bytes.size());
+    std::array<std::uint8_t, 3> output{};
+    REQUIRE(io::native::read_at(file->get(), output, offset));
+    REQUIRE(output == bytes);
+    REQUIRE(io::native::truncate(file->get(), 0));
+    REQUIRE(io::native::metadata(file->get())->size == 0);
+}

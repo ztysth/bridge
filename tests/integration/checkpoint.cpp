@@ -48,7 +48,7 @@ void patch(const std::filesystem::path& path, std::uint64_t offset,
                static_cast<std::streamsize>(bytes.size()));
     REQUIRE(file.good());
 }
-void byte(const std::filesystem::path& path, std::uint64_t offset, std::uint8_t value) {
+void patch_byte(const std::filesystem::path& path, std::uint64_t offset, std::uint8_t value) {
     patch(path, offset, std::span(&value, 1));
 }
 std::vector<std::uint8_t> read_file(const std::filesystem::path& path) {
@@ -212,13 +212,13 @@ TEST_CASE("hostile complete journal records and corrupted partials fail closed")
         const auto partial = checkpoint_path(root, ".part");
         const auto header_size = 100 + description.name.size();
         if (mode == 0)
-            byte(journal, 6, 255);
+            patch_byte(journal, 6, 255);
         if (mode == 1)
-            byte(journal, 5, 2);
+            patch_byte(journal, 5, 2);
         if (mode == 2)
-            byte(journal, header_size - 1, 255);
+            patch_byte(journal, header_size - 1, 255);
         if (mode == 3)
-            byte(journal, header_size + 79, 255);
+            patch_byte(journal, header_size + 79, 255);
         if (mode == 4 || mode == 5) {
             auto encoded = read_file(journal);
             auto record = std::span(encoded).subspan(header_size, 80);
@@ -228,7 +228,7 @@ TEST_CASE("hostile complete journal records and corrupted partials fail closed")
             patch(journal, header_size, record);
         }
         if (mode == 6)
-            byte(partial, 0, 1);
+            patch_byte(partial, 0, 1);
         if (mode == 7)
             std::filesystem::resize_file(partial, chunk_size - 1);
         if (mode == 8)
