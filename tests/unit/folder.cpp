@@ -48,7 +48,11 @@ void receive(io::SourcePayload& source, io::PartialFile& partial) {
         REQUIRE(appended);
         offset = *appended;
     }
-    REQUIRE(partial.finish());
+    auto finished = partial.finish();
+    if (!finished) {
+        CAPTURE(static_cast<unsigned>(finished.error().code), finished.error().native_code);
+        REQUIRE(finished);
+    }
 }
 } // namespace
 TEST_CASE("folder bundles preserve nested empty directories and frozen file contents") {
@@ -233,21 +237,31 @@ TEST_CASE("folder publication verifies hashes enforces bounds and pins destinati
     bytes[23] ^= 1;
     write(folder->payload_root() / m.name,
           std::string_view(reinterpret_cast<const char*>(bytes.data()), bytes.size()));
-    std::filesystem::rename(f.root / "dest", f.root / "moved");
+    auto published_root = f.root / "moved";
+#ifdef _WIN32
+    // Windows refuses to rename ancestors of open child files (our state lock).
+    // This also prevents redirecting this live destination through a junction.
+    std::error_code rename_error;
+    std::filesystem::rename(f.root / "dest", published_root, rename_error);
+    REQUIRE(rename_error == std::errc::permission_denied);
+    published_root = f.root / "dest";
+#else
+    std::filesystem::rename(f.root / "dest", published_root);
+#endif
     REQUIRE(folder->publish());
-    REQUIRE(std::filesystem::exists(f.root / "moved" / "result" / "file"));
+    REQUIRE(std::filesystem::exists(published_root / "result" / "file"));
     auto too_many = magic();
     for (std::size_t i = 0; i <= io::maximum_folder_entries; ++i)
         record(too_many, 1, "f" + std::to_string(i));
     record(too_many, 0, {});
     FileManifest huge{
         {2}, "many", too_many.size(), *security::sha256(too_many), PayloadKind::folder};
-    auto destination = io::FolderDestination::open(f.root / "moved", huge, false);
+    auto destination = io::FolderDestination::open(published_root, huge, false);
     REQUIRE(destination);
     write(destination->payload_root() / huge.name,
           std::string_view(reinterpret_cast<const char*>(too_many.data()), too_many.size()));
     REQUIRE_FALSE(destination->publish());
-    REQUIRE_FALSE(std::filesystem::exists(f.root / "moved" / "many"));
+    REQUIRE_FALSE(std::filesystem::exists(published_root / "many"));
 }
 TEST_CASE("complete folder bundle restarts extraction without trusting stale staging") {
     if (!io::supports_file_io())
@@ -262,14 +276,12 @@ TEST_CASE("complete folder bundle restarts extraction without trusting stale sta
         auto partial = io::PartialFile::create(folder->payload_root(), source->manifest());
         REQUIRE(partial);
         receive(*source, *partial);
-#ifndef _WIN32
-        // Simulate an incomplete extraction and a hostile local symlink at its
+        // Simulate an incomplete extraction and a hostile local reparse link at its
         // private staging name. Cleanup must unlink the link, not its target.
         std::filesystem::create_directory(f.root / "outside");
         write(f.root / "outside" / "keep", "keep");
         bridge::test::directory_link(f.root / "outside",
                                      folder->payload_root() / ".bridge-extract");
-#endif
     }
     auto folder = io::FolderDestination::open(f.root / "dest", source->manifest(), true);
     REQUIRE(folder);
@@ -278,7 +290,5 @@ TEST_CASE("complete folder bundle restarts extraction without trusting stale sta
     REQUIRE(partial->committed());
     REQUIRE(folder->publish());
     REQUIRE(std::filesystem::file_size(f.root / "dest" / "source" / "nested" / "data") == 8);
-#ifndef _WIN32
     REQUIRE(std::filesystem::exists(f.root / "outside" / "keep"));
-#endif
 }

@@ -145,6 +145,11 @@ struct PartialFile::Impl {
         if (!synced)
             return synced;
         complete = true;
+        // Completed state needs only the manifest/counters. In particular,
+        // release Windows DELETE-capable handles so ordinary readers can open
+        // the published file without requesting delete sharing.
+        partial = File{};
+        journal = File{};
         return {};
     }
     Result<Digest> hash_file(std::stop_token stop) {
@@ -380,6 +385,7 @@ Result<PartialFile> PartialFile::resume(const std::filesystem::path& root,
         impl->complete = true;
         impl->partial_named = false;
         impl->durable = manifest.size;
+        impl->partial = File{};
         return PartialFile(std::move(impl));
     }
     impl->journal = std::move(*journal);

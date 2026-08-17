@@ -365,12 +365,25 @@ TEST_CASE("flat portable names and root handles resist path redirection") {
     REQUIRE(writer);
     const auto original = root.path;
     root.path = outside.path / "moved";
+#ifdef _WIN32
+    // Open checkpoint children prevent moving their ancestor on Windows.
+    std::error_code rename_error;
+    std::filesystem::rename(original, root.path, rename_error);
+    REQUIRE(rename_error == std::errc::permission_denied);
+    root.path = original;
+    REQUIRE(writer->finish());
+    REQUIRE(read_file(root.path / description.name).empty());
+    root.path = outside.path / "moved";
+    std::filesystem::rename(original, root.path);
+    REQUIRE(std::filesystem::exists(root.path / description.name));
+#else
     std::filesystem::rename(original, root.path);
     bridge::test::directory_link(outside.path, original);
     REQUIRE(writer->finish());
     REQUIRE(std::filesystem::exists(root.path / description.name));
     REQUIRE_FALSE(std::filesystem::exists(outside.path / description.name));
     REQUIRE(std::filesystem::remove(original));
+#endif
 }
 TEST_CASE("large logical files preserve 64-bit manifests without allocating file-sized buffers") {
     TemporaryRoot root;
