@@ -120,3 +120,29 @@ TEST_CASE("native positional IO preserves offsets above four GiB with sparse sto
     REQUIRE(io::native::truncate(file->get(), 0));
     REQUIRE(io::native::metadata(file->get())->size == 0);
 }
+TEST_CASE("native publication works inside an open private locked directory") {
+    Fixture fixture;
+    auto root = io::native::open_root(fixture.root);
+    REQUIRE(root);
+    auto state = io::native::open_at(root->get(), "state", io::native::Access::create_directory);
+    REQUIRE(state);
+    REQUIRE(io::native::lock(*state));
+    {
+        auto partial =
+            io::native::open_at(state->get(), "partial", io::native::Access::create_file);
+        REQUIRE(partial);
+        const std::array<std::uint8_t, 1> bytes{13};
+        REQUIRE(io::native::write_at(partial->get(), bytes, 0));
+        REQUIRE(io::native::sync(partial->get()));
+        auto published = io::native::link(partial->get(), state->get(), "partial", "complete");
+        if (!published) {
+            CAPTURE(published.error().native_code);
+            REQUIRE(published);
+        }
+        REQUIRE(io::native::metadata(partial->get())->links == 2);
+        REQUIRE(io::native::remove(state->get(), "partial"));
+    }
+    std::ifstream input(fixture.root / "state" / "complete", std::ios::binary);
+    REQUIRE(input);
+    REQUIRE(input.get() == 13);
+}

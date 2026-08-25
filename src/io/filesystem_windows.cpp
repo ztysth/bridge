@@ -253,8 +253,9 @@ Result<File> open_at(Handle parent, const std::string& name, Access mode, Kind k
     ACCESS_MASK access = FILE_GENERIC_READ;
     if (mode == Access::update || mode == Access::create_file)
         access |= FILE_GENERIC_WRITE | DELETE;
-    if (mode == Access::create_directory)
-        access |= DELETE;
+    // A DELETE-capable parent handle conflicts with Windows' internal target
+    // open during hard-link publication. Acquire DELETE only for the entry
+    // being removed/renamed, rather than every newly created directory.
     auto file = relative(parent, name, creating ? disposition_create : disposition_open, access,
                          kind == Kind::directory ? directory_file : non_directory_file,
                          creating ? &security.descriptor : nullptr);
@@ -441,8 +442,17 @@ Result<void> remove(Handle parent, const std::string& name) {
 Result<void> link(Handle file, Handle root, const std::string&, const std::string& to) {
     return set_name(file, root, to, static_cast<FILE_INFORMATION_CLASS>(11)); // FileLinkInformation
 }
-Result<void> rename_directory(Handle stage, Handle, Handle root, const std::string& name) {
-    return set_name(stage, root, name,
+Result<void> rename_directory(Handle stage, Handle state, Handle root, const std::string& name) {
+    auto opened = relative(state, ".bridge-extract", disposition_open, DELETE, directory_file);
+    if (!opened)
+        return std::unexpected(opened.error());
+    auto pinned = metadata(stage);
+    auto named = metadata(opened->get());
+    if (!pinned || !named)
+        return std::unexpected(pinned ? named.error() : pinned.error());
+    if (named->kind != Kind::directory || !same_file(*pinned, *named))
+        return std::unexpected(Error{ErrorCode::invalid_checkpoint});
+    return set_name(opened->get(), root, name,
                     static_cast<FILE_INFORMATION_CLASS>(10)); // FileRenameInformation
 }
 Result<std::vector<Entry>> list(Handle file, std::size_t& count, std::size_t maximum,
