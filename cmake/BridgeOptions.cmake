@@ -7,6 +7,11 @@ function(bridge_options target)
       endif()
       target_compile_options(${target} PRIVATE /fsanitize=address /Zi)
       target_link_options(${target} PUBLIC /INCREMENTAL:NO)
+      # The pinned SDK's static Catch2 library has unannotated STL containers.
+      # Match its ABI across all consumers; ASan still checks allocation bounds,
+      # lifetimes and stacks, but not unused vector/string capacity.
+      target_compile_definitions(${target} PUBLIC
+        _DISABLE_VECTOR_ANNOTATION _DISABLE_STRING_ANNOTATION)
     endif()
     target_compile_options(${target} PRIVATE /W4 /permissive-)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
