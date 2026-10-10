@@ -121,6 +121,27 @@ jobs:
             QML_IMPORT_PATH="$bridge_sdk/Qt6/qml" \
             PATH="$bridge_sdk_bin:$PATH" \
             python .github/package.py test --build "$BRIDGE_CI_BUILD"
+      - name: Measure encrypted durable loopback transfers
+        if: inputs.platform != 'linux'
+        timeout-minutes: 10
+        run: |
+          bridge_sdk="$RUNNER_TEMP/vcpkg-installed/$BRIDGE_TRIPLET"
+          bridge_benchmark="$BRIDGE_CI_BUILD/bridge_transfer_benchmark"
+          bridge_sdk_bin="$bridge_sdk/bin"
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            bridge_sdk_bin="$(cygpath -u "$bridge_sdk_bin")"
+            bridge_benchmark="$bridge_benchmark.exe"
+          fi
+          env QT_PLUGIN_PATH="$bridge_sdk/Qt6/plugins" PATH="$bridge_sdk_bin:$PATH" \
+            "$bridge_benchmark" 500 3 > "$RUNNER_TEMP/bridge-throughput.txt"
+          cat "$RUNNER_TEMP/bridge-throughput.txt"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: inputs.platform != 'linux'
+        with:
+          name: validation-throughput-${{ inputs.platform }}-${{ inputs.arch }}
+          path: ${{ runner.temp }}/bridge-throughput.txt
+          if-no-files-found: error
+          retention-days: 7
       - name: Check Windows x64 filesystem ownership with AddressSanitizer
         if: inputs.platform == 'windows' && inputs.arch == 'x86_64'
         run: |

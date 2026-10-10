@@ -94,6 +94,8 @@ class Transfer final : public QObject {
     ReceiveMode mode_ = ReceiveMode::create;
     io::CheckpointInjection injection_;
     std::optional<Barrier> pending_barrier_;
+    // At most one speculative chunk, independent of the one outstanding wire chunk.
+    std::optional<Chunk> lookahead_;
     std::uint64_t durable_ = 0, expected_ack_ = 0;
     bool checkpoint_opening_ = false;
     bool session_ready_ = false, io_busy_ = false, in_flight_ = false, pump_pending_ = false;

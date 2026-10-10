@@ -346,6 +346,42 @@ TEST_CASE("source changes after a pause fail instead of silently mixing file ver
     REQUIRE_FALSE(p.success_b);
     REQUIRE(p.error_a == static_cast<int>(ErrorCode::source_changed));
 }
+TEST_CASE("pause before the sender observes ACK discards lookahead before source mutation") {
+    Runtime runtime;
+    QTemporaryDir src, root;
+    const auto path = std::filesystem::path(src.path().toStdString()) / "lookahead.bin";
+    write_file(path, std::vector<std::uint8_t>(3 * chunk_size + 7, 41));
+    Pair p;
+    bool requested = false, mutated = false;
+    QObject::connect(&p.receiver, &app::Transfer::changed, &p.loop, [&] {
+        if (!requested && p.receiver.durable_bytes() == chunk_size) {
+            REQUIRE(p.sender.durable_bytes() == 0);
+            requested = true;
+            REQUIRE(p.sender.pause());
+        }
+    });
+    QObject::connect(&p.sender, &app::Transfer::changed, &p.loop, [&] {
+        if (!mutated && p.sender.can_continue()) {
+            mutated = true;
+            REQUIRE(p.sender.durable_bytes() == chunk_size);
+            std::ofstream file(path, std::ios::app);
+            REQUIRE(file);
+            file << "changed";
+            file.close();
+            REQUIRE(file);
+            REQUIRE(p.sender.continue_transfer());
+        }
+    });
+    p.start(path, root.path().toStdString());
+    p.run();
+    REQUIRE(requested);
+    REQUIRE(mutated);
+    REQUIRE_FALSE(p.success_a);
+    REQUIRE_FALSE(p.success_b);
+    REQUIRE(p.error_a == static_cast<int>(ErrorCode::source_changed));
+    REQUIRE_FALSE(std::filesystem::exists(std::filesystem::path(root.path().toStdString()) /
+                                          "lookahead.bin"));
+}
 TEST_CASE("authenticated heartbeats keep a deliberate pause alive") {
     if (!app::Transfer::supported())
         return;

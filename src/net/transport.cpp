@@ -2,6 +2,7 @@
 #include <QNetworkInterface>
 #include <QNetworkProxy>
 #include <QSslConfiguration>
+#include <QVariant>
 #include <algorithm>
 namespace bridge::net {
 namespace {
@@ -92,6 +93,9 @@ Result<void> Transport::prepare() {
     QObject::connect(socket_.get(), &QSslSocket::encrypted, this, [this] {
         if (stopped_)
             return;
+        // Durable ACKs and pause controls must not wait for TCP small-write batching.
+        // Set after connection establishment on both accepted and connecting sockets.
+        socket_->setSocketOption(QAbstractSocket::LowDelayOption, 1);
         const auto peer = socket_->peerCertificate();
         if (socket_->sessionProtocol() != QSsl::TlsV1_3) {
             fail(Error{ErrorCode::tls_failed});

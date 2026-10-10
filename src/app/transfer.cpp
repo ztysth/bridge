@@ -273,9 +273,12 @@ void Transfer::schedule() {
     });
 }
 void Transfer::pump() {
-    if (terminal_ || role_ != Role::initiator || !flow_phase() || io_busy_ || in_flight_)
+    if (terminal_ || role_ != Role::initiator || !flow_phase())
         return;
     if (pause_.held()) {
+        lookahead_.reset();
+        if (io_busy_ || in_flight_)
+            return;
         if (pause_.paused())
             return;
         auto barrier = pause_.barrier(durable_);
@@ -285,7 +288,25 @@ void Transfer::pump() {
         }
         return;
     }
-    if (durable_ == manifest_->size) {
+    if (lookahead_ && !in_flight_) {
+        if (lookahead_->offset != durable_) {
+            fail(Error{ErrorCode::invalid_state});
+            return;
+        }
+        expected_ack_ = lookahead_->offset + lookahead_->data.size();
+        in_flight_ = true;
+        const auto payload = encode_chunk(*lookahead_);
+        lookahead_.reset();
+        if (send(Message::data_chunk, payload))
+            schedule();
+        return;
+    }
+    if (io_busy_ || lookahead_)
+        return;
+    const auto offset = in_flight_ ? expected_ack_ : durable_;
+    if (offset == manifest_->size) {
+        if (in_flight_)
+            return;
         phase_ = TransferPhase::verifying;
         send(Message::finish_file, manifest_->id);
         notify();
@@ -293,8 +314,7 @@ void Transfer::pump() {
     }
     io_busy_ = true;
     auto submitted = worker_->submit(
-        [offset = durable_](FileWorker::State& state,
-                            std::stop_token stop) -> Result<FileWorker::Value> {
+        [offset](FileWorker::State& state, std::stop_token stop) -> Result<FileWorker::Value> {
             auto chunk = state.source->read(offset, stop);
             if (!chunk)
                 return std::unexpected(chunk.error());
@@ -312,10 +332,8 @@ void Transfer::pump() {
                 schedule();
                 return;
             } // Discard an unsent read; no checkpoint moved.
-            const auto& chunk = std::get<Chunk>(*result);
-            expected_ack_ = chunk.offset + chunk.data.size();
-            in_flight_ = true;
-            send(Message::data_chunk, encode_chunk(chunk));
+            lookahead_ = std::move(std::get<Chunk>(*result));
+            schedule();
         });
     if (!submitted)
         fail(submitted.error());
@@ -540,6 +558,7 @@ void Transfer::terminal(bool success, ErrorCode code) {
     error_ = code;
     phase_ = success ? TransferPhase::complete : TransferPhase::failed;
     heartbeat_.stop();
+    lookahead_.reset();
     worker_->stop();
     notify();
 }
