@@ -6,6 +6,7 @@
 #include <QTemporaryDir>
 #include <QTimer>
 #include <catch2/catch_test_macros.hpp>
+#include <catch2/generators/catch_generators.hpp>
 #include <fstream>
 TEST_CASE("desktop model Pause Continue commands resume actual bytes and preserve receiver hold") {
     int argc = 1;
@@ -21,7 +22,8 @@ TEST_CASE("desktop model Pause Continue commands resume actual bytes and preserv
     QTemporaryDir root(QDir::tempPath() + QStringLiteral("/bridge-dst-\u6d4b\u8bd5-XXXXXX"));
     REQUIRE(src.isValid());
     REQUIRE(root.isValid());
-    const auto path = src.path() + "/ui.bin";
+    const auto filename = QStringLiteral("\u4e2d\u6587 \u6587\u4ef6.bin");
+    const auto path = src.path() + '/' + filename;
     {
         QFile file(path);
         REQUIRE(file.open(QIODevice::WriteOnly));
@@ -49,7 +51,7 @@ TEST_CASE("desktop model Pause Continue commands resume actual bytes and preserv
             receiver.confirm();
         }
         if (receiver.can_accept()) {
-            REQUIRE(receiver.filename() == "ui.bin");
+            REQUIRE(receiver.filename() == filename);
             receiver.acceptFile();
         }
         if (!sender.busy() && !receiver.busy())
@@ -87,7 +89,7 @@ TEST_CASE("desktop model Pause Continue commands resume actual bytes and preserv
     REQUIRE(sender.progress() == 1);
     REQUIRE(receiver.progress() == 1);
     REQUIRE(sender.status().contains("complete"));
-    QFile received(root.path() + "/ui.bin");
+    QFile received(root.path() + '/' + filename);
     REQUIRE(received.size() == 4 * bridge::chunk_size);
 }
 TEST_CASE("desktop accepts one local folder drop and transmits its tree after consent") {
@@ -100,10 +102,14 @@ TEST_CASE("desktop accepts one local folder drop and transmits its tree after co
     QTemporaryDir root(QDir::tempPath() + QStringLiteral("/bridge-dst-\u6d4b\u8bd5-XXXXXX"));
     REQUIRE(src.isValid());
     REQUIRE(root.isValid());
-    const auto folder = src.path() + "/DropMe";
+    const auto folder_name = GENERATE(QStringLiteral("\u4e2d\u6587\u6587\u4ef6\u5939"),
+                                      QStringLiteral(".mincraft"), QStringLiteral("you have to"));
+    const auto folder = src.path() + '/' + folder_name;
     REQUIRE(QDir().mkpath(folder + "/nested/empty"));
+    REQUIRE(QDir().mkpath(folder + "/_hello/run this"));
+    const auto file_name = QStringLiteral("\u8d44\u6599 \u6587\u4ef6.txt");
     {
-        QFile file(folder + "/nested/hello.txt");
+        QFile file(folder + "/_hello/run this/" + file_name);
         REQUIRE(file.open(QIODevice::WriteOnly));
         REQUIRE(file.write("hello", 5) == 5);
     }
@@ -115,7 +121,7 @@ TEST_CASE("desktop accepts one local folder drop and transmits its tree after co
     const auto url = QUrl::fromLocalFile(folder);
     REQUIRE_FALSE(sender.dropUrls({url, url}));
     REQUIRE(sender.dropUrls({url}));
-    REQUIRE(sender.selected_name() == "DropMe");
+    REQUIRE(sender.selected_name() == folder_name);
     REQUIRE_FALSE(sender.busy());
     REQUIRE(receiver.selectDestination(QUrl::fromLocalFile(root.path())));
     if (!sender.transfer_supported())
@@ -134,7 +140,7 @@ TEST_CASE("desktop accepts one local folder drop and transmits its tree after co
         }
         if (receiver.can_accept()) {
             REQUIRE(receiver.offered_folder());
-            REQUIRE(receiver.filename() == "DropMe");
+            REQUIRE(receiver.filename() == folder_name);
             consent = true;
             receiver.acceptFile();
         }
@@ -153,8 +159,8 @@ TEST_CASE("desktop accepts one local folder drop and transmits its tree after co
     REQUIRE(consent);
     REQUIRE(sender.complete());
     REQUIRE(receiver.complete());
-    REQUIRE(QDir(root.path() + "/DropMe/nested/empty").exists());
-    QFile received(root.path() + "/DropMe/nested/hello.txt");
+    REQUIRE(QDir(root.path() + '/' + folder_name + "/nested/empty").exists());
+    QFile received(root.path() + '/' + folder_name + "/_hello/run this/" + file_name);
     REQUIRE(received.open(QIODevice::ReadOnly));
     REQUIRE(received.readAll() == "hello");
 }

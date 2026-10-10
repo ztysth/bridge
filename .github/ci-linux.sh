@@ -3,7 +3,7 @@ set -euo pipefail
 # Ubuntu 24.04 SDK, shared by native and emulated builds.
 export DEBIAN_FRONTEND=noninteractive
 sudo apt-get update
-sudo apt-get install -y g++-13 cmake ninja-build pkg-config libssl-dev catch2 \
+sudo apt-get install -y g++-13 cmake ninja-build pkg-config libssl-dev catch2 libutf8proc-dev=2.9.0-1build1 \
   qt6-base-dev=6.4.2+dfsg-21.1build5 qt6-declarative-dev=6.4.2+dfsg-4build3 \
   qt6-declarative-dev-tools qt6-qmltooling-plugins \
   qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtquick-controls qml6-module-qtquick-layouts \

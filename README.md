@@ -16,7 +16,8 @@ transfers. Files and folders can be dragged into the window.
    the sender open and select **Resume interrupted transfer** on both sides.
 
 Existing destination files are preserved. Symlinks and unsafe paths are rejected.
-Names currently use portable ASCII characters. Windows receive destinations must use local NTFS storage.
+Chinese and other Unicode names, spaces, dot prefixes and underscores are supported.
+Windows receive destinations must use local NTFS storage.
 
 ## Download
 
@@ -40,7 +41,7 @@ ctest --preset debug
 ```
 
 The executable is built under `../bridge-build/debug/`. Installed Qt 6, OpenSSL 3
-and Catch2 3 SDKs can use the `debug-system` preset instead.
+Catch2 3 and utf8proc 2.9+ SDKs can use the `debug-system` preset instead.
 
 ## License
 

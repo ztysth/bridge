@@ -199,7 +199,7 @@ def package(build, output, system, architecture, sdk=None, emulated=False):
         run("sudo", "apt-get", "install", "-y", asset.resolve())
         smoke("/usr/bin/bridge_gui")
         inventory = subprocess.check_output(
-            ["dpkg-query", "-W", "-f=${Package} ${Version}\n", "libqt6*", "qml6-module-*", "libssl3t64"],
+            ["dpkg-query", "-W", "-f=${Package} ${Version}\n", "libqt6*", "qml6-module-*", "libssl3t64", "libutf8proc3"],
             text=True).splitlines()
     else:
         run("cmake", "--install", build, "--prefix", stage)

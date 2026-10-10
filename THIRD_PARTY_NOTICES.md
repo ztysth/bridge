@@ -10,6 +10,10 @@ runtime and its dependency notices under `share/bridge/licenses`.
   `vcpkg.json`, at [microsoft/vcpkg](https://github.com/microsoft/vcpkg).
 - OpenSSL 3: Apache-2.0; see [OpenSSL license](https://github.com/openssl/openssl/blob/master/LICENSE.txt).
 - Catch2: BSL-1.0, test-only; it is not a desktop runtime dependency.
+- utf8proc: MIT with permissive Unicode data notices; see
+  [utf8proc license](https://github.com/JuliaStrings/utf8proc/blob/v2.11.3/LICENSE.md).
+  Windows/macOS archives include this Unicode library and its notice; Linux
+  packages depend on Ubuntu's runtime package.
 
 The release dependency inventory records exact installed versions. Notices for
 transitive runtime dependencies are copied from the SDK's installed share tree.

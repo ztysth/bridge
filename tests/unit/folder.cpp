@@ -7,6 +7,7 @@
 #ifndef _WIN32
 #include <sys/stat.h>
 #endif
+#include "../utf8.hpp"
 #include "../windows_junction.hpp"
 using namespace bridge;
 namespace {
@@ -115,6 +116,69 @@ TEST_CASE("folder checkpoint survives owner restart and resumes bundle bytes") {
     REQUIRE(std::filesystem::file_size(f.root / "dest" / "source" / "large.bin") ==
             2 * chunk_size + 7);
 }
+TEST_CASE("folder transfer preserves Unicode dot-prefixed and spaced directory names") {
+    Fixture f;
+    const auto source_path = f.root / std::filesystem::path(u8"\u4e2d\u6587\u6587\u4ef6\u5939");
+    const auto destination = f.root / std::filesystem::path(u8"\u63a5\u6536\u76ee\u5f55");
+    std::filesystem::create_directories(source_path / ".mincraft" / "_hello");
+    std::filesystem::create_directories(source_path / "you have to" / "run this");
+    std::filesystem::create_directory(destination);
+    const auto leaf = std::filesystem::path(u8"\u8d44\u6599 \u6587\u4ef6.txt");
+    write(source_path / ".mincraft" / "_hello" / leaf, "unicode payload");
+    write(source_path / "you have to" / "run this" / "hello world.txt", "spaces");
+    auto source = io::SourcePayload::open(source_path, {6});
+    REQUIRE(source);
+    REQUIRE(source->manifest().name == test::utf8(source_path.filename().u8string()));
+    auto folder = io::FolderDestination::open(destination, source->manifest(), false);
+    REQUIRE(folder);
+    {
+        auto partial = io::PartialFile::create(folder->payload_root(), source->manifest());
+        REQUIRE(partial);
+        receive(*source, *partial);
+    }
+    // Checkpoint reload must preserve the Unicode manifest name, not normalize it.
+    auto resumed = io::PartialFile::resume(folder->payload_root(), source->manifest());
+    REQUIRE(resumed);
+    REQUIRE(resumed->committed());
+    REQUIRE(folder->publish());
+    const auto result = destination / source_path.filename();
+    auto file = io::SourceFile::open(result / ".mincraft" / "_hello" / leaf, {7});
+    REQUIRE(file);
+    auto chunk = file->read(0);
+    REQUIRE(chunk);
+    REQUIRE(std::string(chunk->data.begin(), chunk->data.end()) == "unicode payload");
+    REQUIRE(std::filesystem::is_directory(result / "you have to" / "run this"));
+}
+TEST_CASE("folder roots reject Unicode-equivalent existing destination names") {
+    Fixture f;
+    std::filesystem::create_directory(f.root / "dest" / std::filesystem::path(u8"caf\u00e9"));
+    const auto bytes = magic();
+    FileManifest m{{7},
+                   test::utf8(u8"CAFE\u0301"),
+                   bytes.size(),
+                   *security::sha256(bytes),
+                   PayloadKind::folder};
+    auto result = io::FolderDestination::open(f.root / "dest", m, false);
+    REQUIRE_FALSE(result);
+    REQUIRE(result.error().code == ErrorCode::destination_conflict);
+}
+TEST_CASE("source folders reject Unicode collisions before transmitting a snapshot") {
+    for (const auto& pair :
+         {std::pair{u8"caf\u00e9", u8"cafe\u0301"}, std::pair{u8"Stra\u00dfe", u8"STRASSE"}}) {
+        Fixture f;
+        const auto first = f.root / "source" / std::filesystem::path(pair.first);
+        const auto second = f.root / "source" / std::filesystem::path(pair.second);
+        write(first, "one");
+        write(second, "two");
+        auto source = io::SourcePayload::open(f.root / "source", {8});
+        if (std::filesystem::equivalent(first, second)) {
+            REQUIRE(source); // This source filesystem cannot store the colliding pair.
+        } else {
+            REQUIRE_FALSE(source);
+            REQUIRE(source.error().code == ErrorCode::destination_conflict);
+        }
+    }
+}
 TEST_CASE("folder source rejects symlinks special entries and case collisions") {
     if (!io::supports_file_io())
         return;
@@ -164,7 +228,7 @@ TEST_CASE("folder source rejects symlinks special entries and case collisions") 
 TEST_CASE("hostile folder bundles never publish final output") {
     if (!io::supports_file_io())
         return;
-    for (int mode = 0; mode < 12; ++mode) {
+    for (int mode = 0; mode < 19; ++mode) {
         Fixture f;
         auto bytes = magic();
         switch (mode) {
@@ -203,6 +267,31 @@ TEST_CASE("hostile folder bundles never publish final output") {
             record(bytes, 2, std::string(io::maximum_folder_path + 1, 'x'));
             break;
         case 11:
+            break;
+        case 12:
+            record(bytes, 1, test::utf8(u8"caf\u00e9"));
+            record(bytes, 1, test::utf8(u8"cafe\u0301"));
+            break;
+        case 13:
+            record(bytes, 1, test::utf8(u8"Stra\u00dfe"));
+            record(bytes, 1, "STRASSE");
+            break;
+        case 14:
+            record(bytes, 1, "Parent");
+            record(bytes, 2, "parent/child");
+            break;
+        case 15:
+            record(bytes, 1, test::utf8(u8"caf\u00e9"));
+            record(bytes, 2, test::utf8(u8"cafe\u0301/child"));
+            break;
+        case 16:
+            record(bytes, 2, "\xed\xa0\x80");
+            break;
+        case 17:
+            record(bytes, 2, test::utf8(u8"file\u202egnp.exe"));
+            break;
+        case 18:
+            record(bytes, 2, test::utf8(u8"COM\u00b9.txt"));
             break;
         }
         record(bytes, 0, {});

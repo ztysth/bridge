@@ -88,7 +88,10 @@ Result<void> pack(Handle directory, const std::string& prefix, Writer& writer,
         const bool is_directory = entry.info.kind == native::Kind::directory;
         if ((!is_directory && entry.info.kind != native::Kind::regular))
             return std::unexpected(Error{ErrorCode::invalid_path});
-        if (!names.emplace(folded(path), is_directory).second)
+        auto key = path_collision_key(path);
+        if (!key)
+            return std::unexpected(key.error());
+        if (!names.emplace(std::move(*key), is_directory).second)
             return std::unexpected(Error{ErrorCode::destination_conflict});
         auto child =
             native::open_at(directory, entry.name, native::Access::read,
@@ -150,9 +153,16 @@ Result<void> collision(Handle root, const std::string& name) {
     auto entries = list(root, count, {});
     if (!entries)
         return std::unexpected(entries.error());
-    for (const auto& entry : *entries)
-        if (folded(entry.name) == folded(name))
+    auto key = path_collision_key(name);
+    if (!key)
+        return std::unexpected(key.error());
+    for (const auto& entry : *entries) {
+        auto existing = path_collision_key(entry.name);
+        // A nonportable local name cannot equal an accepted name under NFC/folding.
+        // Do not reject an unrelated existing file merely for its spelling.
+        if (existing && *existing == *key)
             return std::unexpected(Error{ErrorCode::destination_conflict});
+    }
     return {};
 }
 std::string state_name(const TransferId& id) {
@@ -235,7 +245,7 @@ Result<void> extract(Reader& reader, Handle stage, std::stop_token stop) {
         return read;
     if (magic != expected)
         return std::unexpected(Error{ErrorCode::malformed_frame});
-    std::map<std::string, bool> names;
+    std::map<std::string, std::pair<std::string, bool>> names;
     std::vector<std::string> directories;
     std::vector<std::uint8_t> buffer(chunk_size);
     while (true) {
@@ -262,13 +272,19 @@ Result<void> extract(Reader& reader, Handle stage, std::stop_token stop) {
         auto safe = safe_path(path);
         if (!safe)
             return safe;
-        if (!names.emplace(folded(path), bytes[0] == 1).second)
+        auto key = path_collision_key(path);
+        if (!key)
+            return std::unexpected(key.error());
+        if (!names.emplace(std::move(*key), std::pair{path, bytes[0] == 1}).second)
             return std::unexpected(Error{ErrorCode::destination_conflict});
         const auto slash = path.rfind('/');
         const auto parent_path = slash == std::string::npos ? std::string{} : path.substr(0, slash);
         if (!parent_path.empty()) {
-            const auto found = names.find(folded(parent_path));
-            if (found == names.end() || !found->second)
+            auto parent_key = path_collision_key(parent_path);
+            if (!parent_key)
+                return std::unexpected(parent_key.error());
+            const auto found = names.find(*parent_key);
+            if (found == names.end() || !found->second.second || found->second.first != parent_path)
                 return std::unexpected(Error{ErrorCode::invalid_path});
         }
         auto parent = beneath(stage, parent_path);
