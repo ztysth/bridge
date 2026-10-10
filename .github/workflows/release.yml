@@ -58,7 +58,7 @@ jobs:
           pattern: bridge-*
           merge-multiple: true
           path: dist
-      - name: Verify all packages and publish v0.1.0 preview
+      - name: Verify all packages and publish the preview
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -79,4 +79,4 @@ jobs:
           fi
           gh release upload "$BRIDGE_RELEASE_TAG" dist/* --clobber
           gh release edit "$BRIDGE_RELEASE_TAG" --draft=false --prerelease \
-            --notes 'File and folder transfers over Wi-Fi or Ethernet, with Pause/Continue and verified checkpoint recovery. Windows: extract the ZIP and run bridge.cmd; receive destinations require local NTFS. Install the bundled Microsoft C++ runtime if needed. macOS: requires macOS 14+, ad hoc signed and not notarized. Linux: requires Ubuntu 24.04; RISC-V is experimental. Checksums are listed in SHA256SUMS.'
+            --notes 'File and folder transfers over Wi-Fi or Ethernet, with Unicode filenames, Pause/Continue and verified checkpoint recovery. Sender read-ahead overlaps file IO with transfer; actual speed depends on the local network and storage. Update both peers for Unicode names. Windows: extract the ZIP and run bridge.cmd; receive destinations require local NTFS. Install the bundled Microsoft C++ runtime if needed. macOS: requires macOS 14+, ad hoc signed and not notarized. Linux: requires Ubuntu 24.04; RISC-V is experimental. Checksums are listed in SHA256SUMS.'

@@ -478,6 +478,7 @@ include("${script}")
                     self.assertEqual(args[4], (output / "bridge-0.1.0-linux-x86_64.deb").resolve())
 
             with patch.object(release, "run", side_effect=command), \
+                    patch.object(release, "version", return_value="0.1.0"), \
                     patch.object(release, "smoke") as smoke, \
                     patch.object(Path, "rename", side_effect=OSError(errno.EXDEV, "Cross-device link")), \
                     patch.object(release.subprocess, "check_output",
